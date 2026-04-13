@@ -1,7 +1,7 @@
 export class SocialLink {
   constructor(
     public id: string,
-    public platform: string, // "GitHub", "LinkedIn", "Twitter", etc.
+    public platform: string,
     public url: string,
     public logo?: string,
     public order: number = 0,

@@ -8,3 +8,4 @@ export class Interest {
     public updatedAt: Date = new Date()
   ) {}
 }
+

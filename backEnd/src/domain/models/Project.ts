@@ -4,7 +4,6 @@ export class Project {
     public title: string,
     public description: string,
     public longDescription?: string,
-    public technologies: string[], // ["React", "Node.js", "PostgreSQL"]
     public imageUrl?: string,
     public demoUrl?: string,
     public githubUrl?: string,

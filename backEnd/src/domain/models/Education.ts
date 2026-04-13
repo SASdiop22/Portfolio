@@ -14,3 +14,4 @@ export class Education {
     public updatedAt: Date = new Date()
   ) {}
 }
+

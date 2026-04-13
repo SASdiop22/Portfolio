@@ -9,3 +9,4 @@ export class ContactMessage {
     public createdAt: Date = new Date()
   ) {}
 }
+

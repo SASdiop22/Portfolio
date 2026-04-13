@@ -9,11 +9,9 @@ export class User {
     public desiredPosition: string,
     public tagline: string,
     public photo?: string,
-    // Informations de contact
     public city?: string,
     public mobility?: string,
     public phone?: string,
-    // Dates
     public createdAt: Date = new Date(),
     public updatedAt: Date = new Date()
   ) {}

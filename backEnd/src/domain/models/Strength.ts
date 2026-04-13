@@ -8,3 +8,4 @@ export class Strength {
     public updatedAt: Date = new Date()
   ) {}
 }
+

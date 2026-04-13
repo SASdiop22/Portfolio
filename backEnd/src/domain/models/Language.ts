@@ -8,3 +8,4 @@ export class Language {
     public updatedAt: Date = new Date()
   ) {}
 }
+
