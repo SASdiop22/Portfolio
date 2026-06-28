@@ -1,4 +1,4 @@
-import { SocialLinkModel } from '@domain/models';
+import { SocialLinkModel } from '../models/SocialLink';
 
 export interface ISocialLinkRepository {
   findByOrder(): Promise<SocialLinkModel[]>;
