@@ -3573,3 +3573,461 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/SkillRepository.ts backEnd/src/infrastructure/dto/skill/ backEnd/src/use-cases/skill/ backEnd/src/infrastructure/controllers/SkillController.ts backEnd/src/infrastructure/routes/skill.routes.ts
 git commit -m "Add Skill resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 14: SocialLink resource
+
+Simplest shape in this plan — only `findByOrder`, five use-cases (no extra query method).
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/SocialLinkRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/social-link/CreateSocialLinkDto.ts`
+- Create: `backEnd/src/infrastructure/dto/social-link/UpdateSocialLinkDto.ts`
+- Create: `backEnd/src/use-cases/social-link/ListSocialLinkUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/social-link/GetSocialLinkUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/social-link/CreateSocialLinkUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/social-link/UpdateSocialLinkUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/social-link/DeleteSocialLinkUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/SocialLinkController.ts`
+- Create: `backEnd/src/infrastructure/routes/social-link.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10.
+- Produces: mounted route prefix `/social-links` (Task 21).
+
+- [ ] **Step 1: Implement `SocialLinkRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { SocialLinkEntity } from '../entities/SocialLinkEntity';
+import { ISocialLinkRepository } from '../../domain/interfaces/ISocialLinkRepository';
+
+export class SocialLinkRepository
+  extends BaseRepository<SocialLinkModel, SocialLinkEntity>
+  implements ISocialLinkRepository
+{
+  constructor(repository: Repository<SocialLinkEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: SocialLinkEntity): SocialLinkModel {
+    const model = new SocialLinkModel();
+    model.id = entity.id;
+    model.platform = entity.platform;
+    model.url = entity.url;
+    model.logo = entity.logo ?? '';
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<SocialLinkModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/SocialLinkRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsUrl, IsOptional, IsInt, Min } from 'class-validator';
+
+export class CreateSocialLinkDto {
+  @IsString()
+  @IsNotEmpty()
+  platform!: string;
+
+  @IsUrl()
+  url!: string;
+
+  @IsOptional()
+  @IsString()
+  logo?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/social-link/CreateSocialLinkDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsUrl, IsOptional, IsInt, Min } from 'class-validator';
+
+export class UpdateSocialLinkDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  platform?: string;
+
+  @IsOptional()
+  @IsUrl()
+  url?: string;
+
+  @IsOptional()
+  @IsString()
+  logo?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/social-link/UpdateSocialLinkDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListSocialLinkUseCase`, then implement it**
+
+```typescript
+import { ListSocialLinkUseCase } from './ListSocialLinkUseCase';
+import { ISocialLinkRepository } from '../../domain/interfaces/ISocialLinkRepository';
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+
+describe('ListSocialLinkUseCase', () => {
+  it('returns every social link ordered by the repository', async () => {
+    const entries = [new SocialLinkModel(), new SocialLinkModel()];
+    const repository: ISocialLinkRepository = { findByOrder: jest.fn().mockResolvedValue(entries) };
+    const sut = new ListSocialLinkUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/social-link/ListSocialLinkUseCase.test.ts`. Run: `cd backEnd && npx jest ListSocialLinkUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { ISocialLinkRepository } from '../../domain/interfaces/ISocialLinkRepository';
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+
+export class ListSocialLinkUseCase {
+  constructor(private readonly repository: ISocialLinkRepository) {}
+
+  async execute(): Promise<SocialLinkModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/social-link/ListSocialLinkUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `GetSocialLinkUseCase`, then implement it**
+
+```typescript
+import { GetSocialLinkUseCase } from './GetSocialLinkUseCase';
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ISocialLinkFinder {
+  findById(id: string): Promise<SocialLinkModel | null>;
+}
+
+describe('GetSocialLinkUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new SocialLinkModel();
+    const repository: ISocialLinkFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetSocialLinkUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: ISocialLinkFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetSocialLinkUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/social-link/GetSocialLinkUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ISocialLinkFinder {
+  findById(id: string): Promise<SocialLinkModel | null>;
+}
+
+export class GetSocialLinkUseCase {
+  constructor(private readonly repository: ISocialLinkFinder) {}
+
+  async execute(id: string): Promise<SocialLinkModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Social link not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/social-link/GetSocialLinkUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `CreateSocialLinkUseCase`, then implement it**
+
+```typescript
+import { CreateSocialLinkUseCase } from './CreateSocialLinkUseCase';
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+
+interface ISocialLinkCreator {
+  create(data: Partial<SocialLinkModel>): Promise<SocialLinkModel>;
+}
+
+describe('CreateSocialLinkUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new SocialLinkModel();
+    const repository: ISocialLinkCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateSocialLinkUseCase(repository);
+    const input = { platform: 'GitHub', url: 'https://github.com/example' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/social-link/CreateSocialLinkUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { CreateSocialLinkDto } from '../../infrastructure/dto/social-link/CreateSocialLinkDto';
+
+export interface ISocialLinkCreator {
+  create(data: Partial<SocialLinkModel>): Promise<SocialLinkModel>;
+}
+
+export class CreateSocialLinkUseCase {
+  constructor(private readonly repository: ISocialLinkCreator) {}
+
+  async execute(data: CreateSocialLinkDto): Promise<SocialLinkModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/social-link/CreateSocialLinkUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `UpdateSocialLinkUseCase`, then implement it**
+
+```typescript
+import { UpdateSocialLinkUseCase } from './UpdateSocialLinkUseCase';
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ISocialLinkUpdater {
+  update(id: string, data: Partial<SocialLinkModel>): Promise<SocialLinkModel | null>;
+}
+
+describe('UpdateSocialLinkUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new SocialLinkModel();
+    const repository: ISocialLinkUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateSocialLinkUseCase(repository);
+
+    const result = await sut.execute('1', { url: 'https://new-url.com' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { url: 'https://new-url.com' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: ISocialLinkUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateSocialLinkUseCase(repository);
+
+    await expect(sut.execute('missing', { url: 'https://x.com' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/social-link/UpdateSocialLinkUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { UpdateSocialLinkDto } from '../../infrastructure/dto/social-link/UpdateSocialLinkDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ISocialLinkUpdater {
+  update(id: string, data: Partial<SocialLinkModel>): Promise<SocialLinkModel | null>;
+}
+
+export class UpdateSocialLinkUseCase {
+  constructor(private readonly repository: ISocialLinkUpdater) {}
+
+  async execute(id: string, data: UpdateSocialLinkDto): Promise<SocialLinkModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Social link not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/social-link/UpdateSocialLinkUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `DeleteSocialLinkUseCase`, then implement it**
+
+```typescript
+import { DeleteSocialLinkUseCase } from './DeleteSocialLinkUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ISocialLinkDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteSocialLinkUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: ISocialLinkDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteSocialLinkUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: ISocialLinkDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteSocialLinkUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/social-link/DeleteSocialLinkUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ISocialLinkDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteSocialLinkUseCase {
+  constructor(private readonly repository: ISocialLinkDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Social link not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/social-link/DeleteSocialLinkUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Run the full SocialLink test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/social-link`
+Expected: `Tests: 7 passed, 7 total`.
+
+- [ ] **Step 9: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { SocialLinkEntity } from '../entities/SocialLinkEntity';
+import { SocialLinkRepository } from '../repositories/SocialLinkRepository';
+import { ListSocialLinkUseCase } from '../../use-cases/social-link/ListSocialLinkUseCase';
+import { GetSocialLinkUseCase } from '../../use-cases/social-link/GetSocialLinkUseCase';
+import { CreateSocialLinkUseCase } from '../../use-cases/social-link/CreateSocialLinkUseCase';
+import { UpdateSocialLinkUseCase } from '../../use-cases/social-link/UpdateSocialLinkUseCase';
+import { DeleteSocialLinkUseCase } from '../../use-cases/social-link/DeleteSocialLinkUseCase';
+
+const repository = new SocialLinkRepository(AppDataSource.getRepository(SocialLinkEntity));
+const listUseCase = new ListSocialLinkUseCase(repository);
+const getUseCase = new GetSocialLinkUseCase(repository);
+const createUseCase = new CreateSocialLinkUseCase(repository);
+const updateUseCase = new UpdateSocialLinkUseCase(repository);
+const deleteUseCase = new DeleteSocialLinkUseCase(repository);
+
+export class SocialLinkController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await listUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/SocialLinkController.ts`.
+
+- [ ] **Step 10: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { SocialLinkController } from '../controllers/SocialLinkController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateSocialLinkDto } from '../dto/social-link/CreateSocialLinkDto';
+import { UpdateSocialLinkDto } from '../dto/social-link/UpdateSocialLinkDto';
+
+const router = Router();
+
+router.get('/', SocialLinkController.list);
+router.get('/:id', SocialLinkController.get);
+router.post('/', authMiddleware, validate(CreateSocialLinkDto), SocialLinkController.create);
+router.put('/:id', authMiddleware, validate(UpdateSocialLinkDto), SocialLinkController.update);
+router.delete('/:id', authMiddleware, SocialLinkController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/social-link.routes.ts`.
+
+- [ ] **Step 11: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/SocialLinkRepository.ts backEnd/src/infrastructure/dto/social-link/ backEnd/src/use-cases/social-link/ backEnd/src/infrastructure/controllers/SocialLinkController.ts backEnd/src/infrastructure/routes/social-link.routes.ts
+git commit -m "Add SocialLink resource (repository, use-cases, controller, route)"
+```
