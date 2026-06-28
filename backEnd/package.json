@@ -10,7 +10,10 @@
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:generate": "npm run typeorm migration:generate",
     "migration:run": "npm run typeorm migration:run",
-    "migration:revert": "npm run typeorm migration:revert"
+    "migration:revert": "npm run typeorm migration:revert",
+    "lint": "eslint \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\""
   },
   "keywords": ["portfolio", "api", "typescript", "express"],
   "author": "",
@@ -38,6 +41,12 @@
     "@types/multer": "^1.4.11",
     "typescript": "^5.3.3",
     "ts-node": "^10.9.2",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-boundaries": "^4.2.2",
+    "prettier": "^3.3.3"
   }
 }
