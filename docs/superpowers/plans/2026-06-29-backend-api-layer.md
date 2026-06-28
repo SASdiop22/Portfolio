@@ -5384,3 +5384,601 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/LanguageRepository.ts backEnd/src/infrastructure/dto/language/ backEnd/src/use-cases/language/ backEnd/src/infrastructure/controllers/LanguageController.ts backEnd/src/infrastructure/routes/language.routes.ts
 git commit -m "Add Language resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 18: News resource
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/NewsRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/news/CreateNewsDto.ts`
+- Create: `backEnd/src/infrastructure/dto/news/UpdateNewsDto.ts`
+- Create: `backEnd/src/use-cases/news/ListNewsUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/news/ListNewsByCategoryUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/news/ListRecentNewsUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/news/GetNewsUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/news/CreateNewsUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/news/UpdateNewsUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/news/DeleteNewsUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/NewsController.ts`
+- Create: `backEnd/src/infrastructure/routes/news.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10.
+- Produces: mounted route prefix `/news` (Task 21).
+
+- [ ] **Step 1: Implement `NewsRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { NewsModel } from '../../domain/models/News';
+import { NewsEntity } from '../entities/NewsEntity';
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+
+export class NewsRepository extends BaseRepository<NewsModel, NewsEntity> implements INewsRepository {
+  constructor(repository: Repository<NewsEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: NewsEntity): NewsModel {
+    const model = new NewsModel();
+    model.id = entity.id;
+    model.title = entity.title;
+    model.content = entity.content;
+    model.summary = entity.summary;
+    model.category = entity.category;
+    model.imageUrl = entity.imageUrl ?? '';
+    model.publishedAt = entity.publishedAt;
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<NewsModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findByCategory(category: string): Promise<NewsModel[]> {
+    const entities = await this.repository.find({ where: { category }, order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findRecent(limit: number): Promise<NewsModel[]> {
+    const entities = await this.repository.find({ order: { publishedAt: 'DESC' }, take: limit });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/NewsRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsUrl, IsDateString, IsInt, Min } from 'class-validator';
+
+export class CreateNewsDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  content!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  summary!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  category!: string;
+
+  @IsOptional()
+  @IsUrl()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsDateString()
+  publishedAt?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/news/CreateNewsDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsUrl, IsDateString, IsInt, Min } from 'class-validator';
+
+export class UpdateNewsDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  content?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  summary?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  category?: string;
+
+  @IsOptional()
+  @IsUrl()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsDateString()
+  publishedAt?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/news/UpdateNewsDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListNewsUseCase`, then implement it**
+
+```typescript
+import { ListNewsUseCase } from './ListNewsUseCase';
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '../../domain/models/News';
+
+describe('ListNewsUseCase', () => {
+  it('returns every news entry ordered by the repository', async () => {
+    const entries = [new NewsModel(), new NewsModel()];
+    const repository: INewsRepository = {
+      findByOrder: jest.fn().mockResolvedValue(entries),
+      findByCategory: jest.fn(),
+      findRecent: jest.fn(),
+    };
+    const sut = new ListNewsUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/ListNewsUseCase.test.ts`. Run: `cd backEnd && npx jest ListNewsUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '../../domain/models/News';
+
+export class ListNewsUseCase {
+  constructor(private readonly repository: INewsRepository) {}
+
+  async execute(): Promise<NewsModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/ListNewsUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `ListNewsByCategoryUseCase`, then implement it**
+
+```typescript
+import { ListNewsByCategoryUseCase } from './ListNewsByCategoryUseCase';
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '../../domain/models/News';
+
+describe('ListNewsByCategoryUseCase', () => {
+  it('returns news filtered by category', async () => {
+    const entries = [new NewsModel()];
+    const repository: INewsRepository = {
+      findByOrder: jest.fn(),
+      findByCategory: jest.fn().mockResolvedValue(entries),
+      findRecent: jest.fn(),
+    };
+    const sut = new ListNewsByCategoryUseCase(repository);
+
+    const result = await sut.execute('career');
+
+    expect(repository.findByCategory).toHaveBeenCalledWith('career');
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/ListNewsByCategoryUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '../../domain/models/News';
+
+export class ListNewsByCategoryUseCase {
+  constructor(private readonly repository: INewsRepository) {}
+
+  async execute(category: string): Promise<NewsModel[]> {
+    return this.repository.findByCategory(category);
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/ListNewsByCategoryUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `ListRecentNewsUseCase`, then implement it**
+
+```typescript
+import { ListRecentNewsUseCase } from './ListRecentNewsUseCase';
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '../../domain/models/News';
+
+describe('ListRecentNewsUseCase', () => {
+  it('returns the most recent news up to the given limit', async () => {
+    const entries = [new NewsModel()];
+    const repository: INewsRepository = {
+      findByOrder: jest.fn(),
+      findByCategory: jest.fn(),
+      findRecent: jest.fn().mockResolvedValue(entries),
+    };
+    const sut = new ListRecentNewsUseCase(repository);
+
+    const result = await sut.execute(5);
+
+    expect(repository.findRecent).toHaveBeenCalledWith(5);
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/ListRecentNewsUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '../../domain/models/News';
+
+export class ListRecentNewsUseCase {
+  constructor(private readonly repository: INewsRepository) {}
+
+  async execute(limit: number): Promise<NewsModel[]> {
+    return this.repository.findRecent(limit);
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/ListRecentNewsUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `GetNewsUseCase`, then implement it**
+
+```typescript
+import { GetNewsUseCase } from './GetNewsUseCase';
+import { NewsModel } from '../../domain/models/News';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface INewsFinder {
+  findById(id: string): Promise<NewsModel | null>;
+}
+
+describe('GetNewsUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new NewsModel();
+    const repository: INewsFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetNewsUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: INewsFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetNewsUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/GetNewsUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NewsModel } from '../../domain/models/News';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface INewsFinder {
+  findById(id: string): Promise<NewsModel | null>;
+}
+
+export class GetNewsUseCase {
+  constructor(private readonly repository: INewsFinder) {}
+
+  async execute(id: string): Promise<NewsModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('News not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/GetNewsUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `CreateNewsUseCase`, then implement it**
+
+```typescript
+import { CreateNewsUseCase } from './CreateNewsUseCase';
+import { NewsModel } from '../../domain/models/News';
+
+interface INewsCreator {
+  create(data: Partial<NewsModel>): Promise<NewsModel>;
+}
+
+describe('CreateNewsUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new NewsModel();
+    const repository: INewsCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateNewsUseCase(repository);
+    const input = { title: 'New milestone', content: 'content', summary: 'summary', category: 'career' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/CreateNewsUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NewsModel } from '../../domain/models/News';
+import { CreateNewsDto } from '../../infrastructure/dto/news/CreateNewsDto';
+
+export interface INewsCreator {
+  create(data: Partial<NewsModel>): Promise<NewsModel>;
+}
+
+export class CreateNewsUseCase {
+  constructor(private readonly repository: INewsCreator) {}
+
+  async execute(data: CreateNewsDto): Promise<NewsModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/CreateNewsUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Write the failing test for `UpdateNewsUseCase`, then implement it**
+
+```typescript
+import { UpdateNewsUseCase } from './UpdateNewsUseCase';
+import { NewsModel } from '../../domain/models/News';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface INewsUpdater {
+  update(id: string, data: Partial<NewsModel>): Promise<NewsModel | null>;
+}
+
+describe('UpdateNewsUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new NewsModel();
+    const repository: INewsUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateNewsUseCase(repository);
+
+    const result = await sut.execute('1', { title: 'New title' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { title: 'New title' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: INewsUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateNewsUseCase(repository);
+
+    await expect(sut.execute('missing', { title: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/UpdateNewsUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NewsModel } from '../../domain/models/News';
+import { UpdateNewsDto } from '../../infrastructure/dto/news/UpdateNewsDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface INewsUpdater {
+  update(id: string, data: Partial<NewsModel>): Promise<NewsModel | null>;
+}
+
+export class UpdateNewsUseCase {
+  constructor(private readonly repository: INewsUpdater) {}
+
+  async execute(id: string, data: UpdateNewsDto): Promise<NewsModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('News not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/UpdateNewsUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 9: Write the failing test for `DeleteNewsUseCase`, then implement it**
+
+```typescript
+import { DeleteNewsUseCase } from './DeleteNewsUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface INewsDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteNewsUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: INewsDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteNewsUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: INewsDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteNewsUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/news/DeleteNewsUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface INewsDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteNewsUseCase {
+  constructor(private readonly repository: INewsDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('News not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/news/DeleteNewsUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 10: Run the full News test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/news`
+Expected: `Tests: 10 passed, 10 total`.
+
+- [ ] **Step 11: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { NewsEntity } from '../entities/NewsEntity';
+import { NewsRepository } from '../repositories/NewsRepository';
+import { ListNewsUseCase } from '../../use-cases/news/ListNewsUseCase';
+import { ListNewsByCategoryUseCase } from '../../use-cases/news/ListNewsByCategoryUseCase';
+import { ListRecentNewsUseCase } from '../../use-cases/news/ListRecentNewsUseCase';
+import { GetNewsUseCase } from '../../use-cases/news/GetNewsUseCase';
+import { CreateNewsUseCase } from '../../use-cases/news/CreateNewsUseCase';
+import { UpdateNewsUseCase } from '../../use-cases/news/UpdateNewsUseCase';
+import { DeleteNewsUseCase } from '../../use-cases/news/DeleteNewsUseCase';
+
+const repository = new NewsRepository(AppDataSource.getRepository(NewsEntity));
+const listUseCase = new ListNewsUseCase(repository);
+const byCategoryUseCase = new ListNewsByCategoryUseCase(repository);
+const recentUseCase = new ListRecentNewsUseCase(repository);
+const getUseCase = new GetNewsUseCase(repository);
+const createUseCase = new CreateNewsUseCase(repository);
+const updateUseCase = new UpdateNewsUseCase(repository);
+const deleteUseCase = new DeleteNewsUseCase(repository);
+
+export class NewsController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+      const result = category ? await byCategoryUseCase.execute(category) : await listUseCase.execute();
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async recent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 5;
+      res.status(200).json({ success: true, data: await recentUseCase.execute(limit) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/NewsController.ts`.
+
+- [ ] **Step 12: Implement the route**
+
+`/recent` is a fixed path and must be registered before `/:id`:
+
+```typescript
+import { Router } from 'express';
+import { NewsController } from '../controllers/NewsController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateNewsDto } from '../dto/news/CreateNewsDto';
+import { UpdateNewsDto } from '../dto/news/UpdateNewsDto';
+
+const router = Router();
+
+router.get('/', NewsController.list);
+router.get('/recent', NewsController.recent);
+router.get('/:id', NewsController.get);
+router.post('/', authMiddleware, validate(CreateNewsDto), NewsController.create);
+router.put('/:id', authMiddleware, validate(UpdateNewsDto), NewsController.update);
+router.delete('/:id', authMiddleware, NewsController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/news.routes.ts`.
+
+- [ ] **Step 13: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/NewsRepository.ts backEnd/src/infrastructure/dto/news/ backEnd/src/use-cases/news/ backEnd/src/infrastructure/controllers/NewsController.ts backEnd/src/infrastructure/routes/news.routes.ts
+git commit -m "Add News resource (repository, use-cases, controller, route)"
+```
