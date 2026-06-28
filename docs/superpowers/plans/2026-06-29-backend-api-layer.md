@@ -31,11 +31,12 @@
 - Modify: `backEnd/src/domain/models/Interest.ts`
 - Modify: `backEnd/src/domain/models/Language.ts`
 - Modify: `backEnd/src/domain/models/News.ts`
+- Modify: `backEnd/src/domain/models/User.ts`
 
 **Interfaces:**
 - Produces: the exact model shapes every later task's DTOs, repository `toModel()` mappings, and use-case tests are written against. Get this task's field lists right — everything downstream copies them.
 
-`ProjectEntity` already has a `technologies!: string[]` column and `SkillEntity` already has `level?: number`/`icon?: string` columns, but their domain models don't expose these fields — the spec requires Project's "technologies utilisées" and Skill's proficiency level, so the API can't satisfy the spec without this fix. Separately, every entity except `ContactMessageEntity` has an `@UpdateDateColumn() updatedAt`, but only `StrengthModel` exposes it on the model side — adding it everywhere lets admin UIs show a real "last modified" time.
+`ProjectEntity` already has a `technologies!: string[]` column and `SkillEntity` already has `level?: number`/`icon?: string` columns, but their domain models don't expose these fields — the spec requires Project's "technologies utilisées" and Skill's proficiency level, so the API can't satisfy the spec without this fix. Separately, every entity except `ContactMessageEntity` has an `@UpdateDateColumn() updatedAt`, but only `StrengthModel` exposes it on the model side — adding it everywhere (including `UserModel`) lets admin UIs show a real "last modified" time.
 
 - [ ] **Step 1: Update `ProjectModel`**
 
@@ -163,6 +164,26 @@ export class NewsModel {
 }
 ```
 
+`backEnd/src/domain/models/User.ts`:
+```typescript
+export class UserModel {
+    public id: string;
+    public firstName: string;
+    public lastName: string;
+    public email: string;
+    public password: string;
+    public birthDate: Date;
+    public desiredPosition: string;
+    public tagline: string;
+    public photo: string;
+    public city: string;
+    public mobility: string;
+    public phone: string;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
 - [ ] **Step 4: Verify it compiles**
 
 Run: `cd backEnd && npx tsc --noEmit`
@@ -171,7 +192,7 @@ Expected: no errors (these are additive field changes; nothing currently constru
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backEnd/src/domain/models/Project.ts backEnd/src/domain/models/Skill.ts backEnd/src/domain/models/Education.ts backEnd/src/domain/models/Experience.ts backEnd/src/domain/models/SocialLink.ts backEnd/src/domain/models/Interest.ts backEnd/src/domain/models/Language.ts backEnd/src/domain/models/News.ts
+git add backEnd/src/domain/models/Project.ts backEnd/src/domain/models/Skill.ts backEnd/src/domain/models/Education.ts backEnd/src/domain/models/Experience.ts backEnd/src/domain/models/SocialLink.ts backEnd/src/domain/models/Interest.ts backEnd/src/domain/models/Language.ts backEnd/src/domain/models/News.ts backEnd/src/domain/models/User.ts
 git commit -m "Add missing fields to domain models (technologies, level, icon, updatedAt)"
 ```
 
@@ -874,7 +895,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { envConfig } from '../../config/env.config';
 import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
-import { AuthenticatedUser } from './express.d';
+import { AuthenticatedUser } from './express';
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
@@ -973,6 +994,7 @@ export class UserRepository extends BaseRepository<UserModel, UserEntity> implem
     model.mobility = entity.mobility ?? '';
     model.phone = entity.phone ?? '';
     model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
     return model;
   }
 
