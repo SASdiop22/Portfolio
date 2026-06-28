@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/backEnd"
+    schedule:
+      interval: "weekly"
+    target-branch: "feature/structure-projet"
+  - package-ecosystem: "npm"
+    directory: "/frontEnd"
+    schedule:
+      interval: "weekly"
+    target-branch: "feature/structure-projet"
