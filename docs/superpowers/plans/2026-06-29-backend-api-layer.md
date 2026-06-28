@@ -15,12 +15,13 @@
 - No DB migrations — `synchronize: true` (dev-only, already configured in `backEnd/src/infrastructure/database/config/data-source.ts`) handles schema.
 - No DB-backed/integration tests — only use-cases get unit tests, with the repository mocked.
 - No public user registration — the one admin user is created via a seed script (Task 9), not an API endpoint.
-- Follow the codebase's existing import convention: relative imports (`../models/Education`), not the `@domain/*`/`@infrastructure/*` TypeScript path aliases defined in `tsconfig.json` — the codebase already hit a real bug from barrel-file aliasing earlier and moved away from it.
+- Use the `@domain/*`, `@infrastructure/*`, `@use-cases/*`, `@shared/*`, `@config/*` TypeScript path aliases (already defined in `backEnd/tsconfig.json`) for every cross-directory import — e.g. `@domain/models/Education`, never `../../domain/models/Education`. Always point an alias at a real file, never a barrel/index re-export — the codebase's earlier bug came specifically from a deleted barrel file, not from the alias mechanism itself. Same-directory imports (e.g. a test file importing the thing it tests) stay as `./X`.
+- Task 1 also updates `backEnd/.eslintrc.json`'s `boundaries` resolver so it can follow these aliases (see Task 1, Step 6) — without that fix, `eslint-plugin-boundaries` would silently fail to resolve aliased imports.
 - Response envelope for errors matches what's already in `backEnd/src/server.ts`: `{ success: false, message, ... }`.
 
 ---
 
-### Task 1: Fix domain model field gaps
+### Task 1: Fix domain model field gaps, and make ESLint boundaries understand path aliases
 
 **Files:**
 - Modify: `backEnd/src/domain/models/Project.ts`
@@ -31,6 +32,9 @@
 - Modify: `backEnd/src/domain/models/Interest.ts`
 - Modify: `backEnd/src/domain/models/Language.ts`
 - Modify: `backEnd/src/domain/models/News.ts`
+- Modify: `backEnd/src/domain/models/User.ts`
+- Modify: `backEnd/package.json`
+- Modify: `backEnd/.eslintrc.json`
 - Modify: `backEnd/src/domain/models/User.ts`
 
 **Interfaces:**
@@ -196,6 +200,85 @@ git add backEnd/src/domain/models/Project.ts backEnd/src/domain/models/Skill.ts 
 git commit -m "Add missing fields to domain models (technologies, level, icon, updatedAt)"
 ```
 
+Every task from here on imports across directories using the `@domain/*`/`@infrastructure/*`/`@use-cases/*`/`@shared/*`/`@config/*` aliases already defined in `backEnd/tsconfig.json`, instead of relative paths. This requires two separate fixes, because `tsc --noEmit` understanding `paths` for type-checking does **not** mean anything actually resolves these aliases at runtime:
+
+1. **Runtime resolution** (Steps 6-7 below): neither Jest, `ts-node`, nor plain Node (running the compiled `dist/` output) know what `@domain/...` means out of the box — each needs its own fix, or every test in this plan and the `dev`/`build`/`seed:admin` scripts would fail with "Cannot find module."
+2. **Lint-time resolution** (Steps 8-9 below): `eslint-plugin-boundaries` resolves each import to a file path to enforce the domain/infrastructure layering rule — its current resolver only understands Node-style relative/`node_modules` resolution, not path aliases, so without a fix it would silently skip every aliased import (the same class of bug already fixed once for `.ts` extensions in the CI quality-gate work, one layer further in).
+
+- [ ] **Step 6: Add the packages that make aliases resolve at runtime**
+
+In `backEnd/package.json`, add to `devDependencies`:
+
+```json
+"tsconfig-paths": "^4.2.0",
+"tsc-alias": "^1.8.10"
+```
+
+Run: `cd backEnd && npm install`
+
+`tsconfig-paths` lets `ts-node` resolve `@domain/...` etc. at runtime by reading `tsconfig.json`'s `paths` (used for `dev` and `seed:admin`, both of which run TypeScript directly via `ts-node`, never through a separate build step). `tsc-alias` runs after `tsc` and rewrites every aliased import in the compiled `dist/` output back into a plain relative path, so the production `start` script (`node dist/server.js`) needs no extra runtime resolver at all — by the time it runs, the aliases no longer exist in the emitted JavaScript.
+
+- [ ] **Step 7: Wire both into the existing scripts**
+
+In `backEnd/package.json`, update the `scripts` block (the existing `dev` and `build` entries from before this plan, plus the `seed:admin` entry that Task 9 will add):
+
+```json
+"dev": "nodemon --exec ts-node -r tsconfig-paths/register src/server.ts",
+"build": "tsc && tsc-alias",
+```
+
+(Task 9 adds `seed:admin` directly with the `-r tsconfig-paths/register` flag already included, since that task comes after this one — no separate fix needed there.)
+
+No file in this codebase uses an alias import yet at this point in the plan (Task 1 only added fields to model classes, which don't import anything) — so there's nothing alias-specific to verify here yet. Confirm the scripts are at least still syntactically intact:
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors (unchanged from Step 4 — this step only touched `package.json` scripts/deps, not source files).
+
+The real proof that `tsconfig-paths`/`tsc-alias` work comes later: Task 2's Jest smoke test imports via an alias (moduleNameMapper proves Jest resolution), and Task 9's seed script is the first `ts-node`-executed file using one (proving the `-r tsconfig-paths/register` flag works).
+
+- [ ] **Step 8: Add the TypeScript-aware import resolver (for ESLint)**
+
+In `backEnd/package.json`, add to `devDependencies`:
+
+```json
+"eslint-import-resolver-typescript": "^3.7.0"
+```
+
+Run: `cd backEnd && npm install`
+
+- [ ] **Step 9: Update the boundaries resolver settings**
+
+In `backEnd/.eslintrc.json`, replace the `"import/resolver"` block under `"settings"`:
+
+```json
+    "import/resolver": {
+      "typescript": {},
+      "node": {
+        "extensions": [".js", ".ts"]
+      }
+    },
+```
+
+(`"typescript": {}` reads `tsconfig.json`'s `paths` automatically and is tried first; the existing `node` resolver stays as a fallback for anything it doesn't cover.)
+
+- [ ] **Step 10: Verify the boundaries rule still catches a violation through an alias**
+
+Temporarily add this line to the top of `backEnd/src/domain/models/News.ts`:
+```typescript
+import { NewsEntity } from '@infrastructure/entities/NewsEntity';
+```
+Run: `cd backEnd && npm run lint`
+Expected: an error mentioning `boundaries/element-types` (same check Task 2 of the CI quality-gate plan already established for relative imports — this confirms it still fires for an aliased one).
+
+Then remove that line and run `git diff backEnd/src/domain/models/News.ts` — expected: no output.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add backEnd/package.json backEnd/package-lock.json backEnd/.eslintrc.json
+git commit -m "Configure ESLint boundaries resolver to understand TypeScript path aliases"
+```
+
 ---
 
 ### Task 2: Jest test setup
@@ -233,22 +316,33 @@ Expected: install completes with no errors.
 
 - [ ] **Step 4: Create the Jest config**
 
+`ts-jest`'s TypeScript transform respects `tsconfig.json` for type-checking, but Jest's own module resolver doesn't — without `moduleNameMapper`, every test file that imports via `@domain/...` etc. (which is every test from Task 3 onward) would fail at runtime with "Cannot find module," even though `tsc --noEmit` sees no problem.
+
 ```javascript
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   testMatch: ['**/*.test.ts'],
+  moduleNameMapper: {
+    '^@domain/(.*)$': '<rootDir>/src/domain/$1',
+    '^@infrastructure/(.*)$': '<rootDir>/src/infrastructure/$1',
+    '^@use-cases/(.*)$': '<rootDir>/src/use-cases/$1',
+    '^@shared/(.*)$': '<rootDir>/src/shared/$1',
+    '^@config/(.*)$': '<rootDir>/src/config/$1',
+  },
 };
 ```
 Save as `backEnd/jest.config.js`.
 
-- [ ] **Step 5: Write a throwaway smoke test to verify the setup works**
+- [ ] **Step 5: Write a throwaway smoke test that proves both Jest's setup and the alias resolution work**
+
+Importing via `@domain/models/Education` here (rather than the same-directory `./Education`) is deliberate — it's the only way this task can actually prove `moduleNameMapper` works, since nothing else in the codebase uses an alias yet.
 
 ```typescript
-import { EducationModel } from './Education';
+import { EducationModel } from '@domain/models/Education';
 
 describe('Jest setup smoke test', () => {
-  it('can instantiate a domain model', () => {
+  it('can instantiate a domain model via its path alias', () => {
     const model = new EducationModel();
     model.title = 'Test';
     expect(model.title).toBe('Test');
@@ -412,7 +506,7 @@ git commit -m "Add shared exception classes"
 ```typescript
 import { Request, Response } from 'express';
 import { errorMiddleware } from './error.middleware';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 function mockResponse() {
   const res: Partial<Response> = {};
@@ -456,9 +550,9 @@ Expected: FAIL — `Cannot find module './error.middleware'`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppException } from '../../shared/exceptions/AppException';
-import { ValidationException } from '../../shared/exceptions/ValidationException';
-import { envConfig } from '../../config/env.config';
+import { AppException } from '@shared/exceptions/AppException';
+import { ValidationException } from '@shared/exceptions/ValidationException';
+import { envConfig } from '@config/env.config';
 
 // Express identifies error-handling middleware by its 4-argument arity, so `next`
 // must stay in the signature even though it's unused.
@@ -501,7 +595,7 @@ app.use(errorMiddleware);
 And add the import near the top, after the `initializeDatabase` import (line 11):
 
 ```typescript
-import { errorMiddleware } from './infrastructure/middlewares/error.middleware';
+import { errorMiddleware } from '@infrastructure/middlewares/error.middleware';
 ```
 
 - [ ] **Step 6: Verify the backend still builds**
@@ -534,7 +628,7 @@ git commit -m "Add error middleware, wire into server.ts"
 import { Request, Response, NextFunction } from 'express';
 import { IsString, IsNotEmpty } from 'class-validator';
 import { validate } from './validate.middleware';
-import { ValidationException } from '../../shared/exceptions/ValidationException';
+import { ValidationException } from '@shared/exceptions/ValidationException';
 
 class TestDto {
   @IsString()
@@ -576,7 +670,7 @@ Expected: FAIL — `Cannot find module './validate.middleware'`.
 import { Request, Response, NextFunction } from 'express';
 import { plainToInstance, ClassConstructor } from 'class-transformer';
 import { validate as classValidatorValidate } from 'class-validator';
-import { ValidationException } from '../../shared/exceptions/ValidationException';
+import { ValidationException } from '@shared/exceptions/ValidationException';
 
 export function validate<T extends object>(DtoClass: ClassConstructor<T>) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -828,8 +922,8 @@ git commit -m "Add generic BaseRepository"
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { authMiddleware } from './auth.middleware';
-import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
-import { envConfig } from '../../config/env.config';
+import { UnauthorizedException } from '@shared/exceptions/UnauthorizedException';
+import { envConfig } from '@config/env.config';
 
 describe('authMiddleware', () => {
   it('calls next() and sets req.user when the token is valid', () => {
@@ -893,8 +987,8 @@ Save as `backEnd/src/infrastructure/middlewares/express.d.ts`.
 ```typescript
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { envConfig } from '../../config/env.config';
-import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
+import { envConfig } from '@config/env.config';
+import { UnauthorizedException } from '@shared/exceptions/UnauthorizedException';
 import { AuthenticatedUser } from './express';
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
@@ -957,7 +1051,7 @@ git commit -m "Add JWT auth middleware"
 - [ ] **Step 1: Fix `IUserRepository.findByEmail` to be nullable**
 
 ```typescript
-import { UserModel } from '../models/User';
+import { UserModel } from '@domain/models/User';
 
 export interface IUserRepository {
   findByEmail(email: string): Promise<UserModel | null>;
@@ -970,9 +1064,9 @@ Save as `backEnd/src/domain/interfaces/IUserRepository.ts` (replacing its curren
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { UserModel } from '../../domain/models/User';
-import { UserEntity } from '../entities/UserEntity';
-import { IUserRepository } from '../../domain/interfaces/IUserRepository';
+import { UserModel } from '@domain/models/User';
+import { UserEntity } from '@infrastructure/entities/UserEntity';
+import { IUserRepository } from '@domain/interfaces/IUserRepository';
 
 export class UserRepository extends BaseRepository<UserModel, UserEntity> implements IUserRepository {
   constructor(repository: Repository<UserEntity>) {
@@ -1010,9 +1104,9 @@ Save as `backEnd/src/infrastructure/repositories/UserRepository.ts`.
 
 ```typescript
 import { LoginUseCase } from './LoginUseCase';
-import { IUserRepository } from '../../domain/interfaces/IUserRepository';
-import { UserModel } from '../../domain/models/User';
-import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
+import { IUserRepository } from '@domain/interfaces/IUserRepository';
+import { UserModel } from '@domain/models/User';
+import { UnauthorizedException } from '@shared/exceptions/UnauthorizedException';
 import bcrypt from 'bcryptjs';
 
 jest.mock('bcryptjs');
@@ -1071,9 +1165,9 @@ Expected: FAIL — `Cannot find module './LoginUseCase'`.
 ```typescript
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { IUserRepository } from '../../domain/interfaces/IUserRepository';
-import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
-import { envConfig } from '../../config/env.config';
+import { IUserRepository } from '@domain/interfaces/IUserRepository';
+import { UnauthorizedException } from '@shared/exceptions/UnauthorizedException';
+import { envConfig } from '@config/env.config';
 
 export interface LoginInput {
   email: string;
@@ -1139,10 +1233,10 @@ Save as `backEnd/src/infrastructure/dto/auth/LoginDto.ts`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { LoginUseCase } from '../../use-cases/auth/LoginUseCase';
-import { UserRepository } from '../repositories/UserRepository';
-import { AppDataSource } from '../database/config/data-source';
-import { UserEntity } from '../entities/UserEntity';
+import { LoginUseCase } from '@use-cases/auth/LoginUseCase';
+import { UserRepository } from '@infrastructure/repositories/UserRepository';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { UserEntity } from '@infrastructure/entities/UserEntity';
 
 const userRepository = new UserRepository(AppDataSource.getRepository(UserEntity));
 const loginUseCase = new LoginUseCase(userRepository);
@@ -1164,9 +1258,9 @@ Save as `backEnd/src/infrastructure/controllers/AuthController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { AuthController } from '../controllers/AuthController';
-import { validate } from '../middlewares/validate.middleware';
-import { LoginDto } from '../dto/auth/LoginDto';
+import { AuthController } from '@infrastructure/controllers/AuthController';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { LoginDto } from '@infrastructure/dto/auth/LoginDto';
 
 const router = Router();
 
@@ -1237,17 +1331,19 @@ ADMIN_PASSWORD=change-this-before-seeding
 In `backEnd/package.json`, in `scripts`, add:
 
 ```json
-"seed:admin": "ts-node src/infrastructure/database/seeders/admin-user.seed.ts"
+"seed:admin": "ts-node -r tsconfig-paths/register src/infrastructure/database/seeders/admin-user.seed.ts"
 ```
+
+The `-r tsconfig-paths/register` flag is required here — this script imports `@infrastructure/database/config/data-source`, `@infrastructure/entities/UserEntity`, and `@config/env.config` by alias (Step 4 below), and `ts-node` does not resolve TypeScript path aliases at runtime without it (Task 1, Steps 6-7, set up the same fix for the `dev` script).
 
 - [ ] **Step 4: Implement the seed script**
 
 ```typescript
 import 'reflect-metadata';
 import bcrypt from 'bcryptjs';
-import { AppDataSource } from '../config/data-source';
-import { UserEntity } from '../../entities/UserEntity';
-import { envConfig } from '../../../config/env.config';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { UserEntity } from '@infrastructure/entities/UserEntity';
+import { envConfig } from '@config/env.config';
 
 async function seedAdminUser(): Promise<void> {
   await AppDataSource.initialize();
@@ -1326,9 +1422,9 @@ This task is not run automatically by anything else in this plan — once the br
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { EducationModel } from '../../domain/models/Education';
-import { EducationEntity } from '../entities/EducationEntity';
-import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+import { EducationModel } from '@domain/models/Education';
+import { EducationEntity } from '@infrastructure/entities/EducationEntity';
+import { IEducationRepository } from '@domain/interfaces/IEducationRepository';
 
 export class EducationRepository
   extends BaseRepository<EducationModel, EducationEntity>
@@ -1466,8 +1562,8 @@ Save as `backEnd/src/infrastructure/dto/education/UpdateEducationDto.ts`.
 
 ```typescript
 import { ListEducationUseCase } from './ListEducationUseCase';
-import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
-import { EducationModel } from '../../domain/models/Education';
+import { IEducationRepository } from '@domain/interfaces/IEducationRepository';
+import { EducationModel } from '@domain/models/Education';
 
 describe('ListEducationUseCase', () => {
   it('returns every education entry ordered by the repository', async () => {
@@ -1492,8 +1588,8 @@ Save as `backEnd/src/use-cases/education/ListEducationUseCase.test.ts`.
 Run: `cd backEnd && npx jest ListEducationUseCase.test.ts` — expect FAIL (`Cannot find module`).
 
 ```typescript
-import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
-import { EducationModel } from '../../domain/models/Education';
+import { IEducationRepository } from '@domain/interfaces/IEducationRepository';
+import { EducationModel } from '@domain/models/Education';
 
 export class ListEducationUseCase {
   constructor(private readonly repository: IEducationRepository) {}
@@ -1509,8 +1605,8 @@ Save as `backEnd/src/use-cases/education/ListEducationUseCase.ts`. Re-run the sa
 
 ```typescript
 import { GetCurrentEducationUseCase } from './GetCurrentEducationUseCase';
-import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
-import { EducationModel } from '../../domain/models/Education';
+import { IEducationRepository } from '@domain/interfaces/IEducationRepository';
+import { EducationModel } from '@domain/models/Education';
 
 describe('GetCurrentEducationUseCase', () => {
   it('returns only the current education entries', async () => {
@@ -1531,8 +1627,8 @@ describe('GetCurrentEducationUseCase', () => {
 Save as `backEnd/src/use-cases/education/GetCurrentEducationUseCase.test.ts`. Run it (expect FAIL), then:
 
 ```typescript
-import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
-import { EducationModel } from '../../domain/models/Education';
+import { IEducationRepository } from '@domain/interfaces/IEducationRepository';
+import { EducationModel } from '@domain/models/Education';
 
 export class GetCurrentEducationUseCase {
   constructor(private readonly repository: IEducationRepository) {}
@@ -1548,9 +1644,9 @@ Save as `backEnd/src/use-cases/education/GetCurrentEducationUseCase.ts`. Re-run 
 
 ```typescript
 import { GetEducationUseCase } from './GetEducationUseCase';
-import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
-import { EducationModel } from '../../domain/models/Education';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { IEducationRepository } from '@domain/interfaces/IEducationRepository';
+import { EducationModel } from '@domain/models/Education';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface FullEducationRepository extends IEducationRepository {
   findById(id: string): Promise<EducationModel | null>;
@@ -1578,8 +1674,8 @@ describe('GetEducationUseCase', () => {
 Save as `backEnd/src/use-cases/education/GetEducationUseCase.test.ts`. Run it (expect FAIL), then:
 
 ```typescript
-import { EducationModel } from '../../domain/models/Education';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { EducationModel } from '@domain/models/Education';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IEducationFinder {
   findById(id: string): Promise<EducationModel | null>;
@@ -1607,7 +1703,7 @@ Save as `backEnd/src/use-cases/education/GetEducationUseCase.ts`. Re-run — exp
 
 ```typescript
 import { CreateEducationUseCase } from './CreateEducationUseCase';
-import { EducationModel } from '../../domain/models/Education';
+import { EducationModel } from '@domain/models/Education';
 
 interface ICreator {
   create(data: Partial<EducationModel>): Promise<EducationModel>;
@@ -1630,8 +1726,8 @@ describe('CreateEducationUseCase', () => {
 Save as `backEnd/src/use-cases/education/CreateEducationUseCase.test.ts`. Run it (expect FAIL), then:
 
 ```typescript
-import { EducationModel } from '../../domain/models/Education';
-import { CreateEducationDto } from '../../infrastructure/dto/education/CreateEducationDto';
+import { EducationModel } from '@domain/models/Education';
+import { CreateEducationDto } from '@infrastructure/dto/education/CreateEducationDto';
 
 export interface IEducationCreator {
   create(data: Partial<EducationModel>): Promise<EducationModel>;
@@ -1651,8 +1747,8 @@ Save as `backEnd/src/use-cases/education/CreateEducationUseCase.ts`. Re-run — 
 
 ```typescript
 import { UpdateEducationUseCase } from './UpdateEducationUseCase';
-import { EducationModel } from '../../domain/models/Education';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { EducationModel } from '@domain/models/Education';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IUpdater {
   update(id: string, data: Partial<EducationModel>): Promise<EducationModel | null>;
@@ -1681,9 +1777,9 @@ describe('UpdateEducationUseCase', () => {
 Save as `backEnd/src/use-cases/education/UpdateEducationUseCase.test.ts`. Run it (expect FAIL), then:
 
 ```typescript
-import { EducationModel } from '../../domain/models/Education';
-import { UpdateEducationDto } from '../../infrastructure/dto/education/UpdateEducationDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { EducationModel } from '@domain/models/Education';
+import { UpdateEducationDto } from '@infrastructure/dto/education/UpdateEducationDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IEducationUpdater {
   update(id: string, data: Partial<EducationModel>): Promise<EducationModel | null>;
@@ -1709,7 +1805,7 @@ Save as `backEnd/src/use-cases/education/UpdateEducationUseCase.ts`. Re-run — 
 
 ```typescript
 import { DeleteEducationUseCase } from './DeleteEducationUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IDeleter {
   delete(id: string): Promise<boolean>;
@@ -1736,7 +1832,7 @@ describe('DeleteEducationUseCase', () => {
 Save as `backEnd/src/use-cases/education/DeleteEducationUseCase.test.ts`. Run it (expect FAIL), then:
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IEducationDeleter {
   delete(id: string): Promise<boolean>;
@@ -1765,15 +1861,15 @@ Expected: `Tests: 9 passed, 9 total` (1 List + 1 Current + 2 Get + 1 Create + 2 
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { EducationEntity } from '../entities/EducationEntity';
-import { EducationRepository } from '../repositories/EducationRepository';
-import { ListEducationUseCase } from '../../use-cases/education/ListEducationUseCase';
-import { GetCurrentEducationUseCase } from '../../use-cases/education/GetCurrentEducationUseCase';
-import { GetEducationUseCase } from '../../use-cases/education/GetEducationUseCase';
-import { CreateEducationUseCase } from '../../use-cases/education/CreateEducationUseCase';
-import { UpdateEducationUseCase } from '../../use-cases/education/UpdateEducationUseCase';
-import { DeleteEducationUseCase } from '../../use-cases/education/DeleteEducationUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { EducationEntity } from '@infrastructure/entities/EducationEntity';
+import { EducationRepository } from '@infrastructure/repositories/EducationRepository';
+import { ListEducationUseCase } from '@use-cases/education/ListEducationUseCase';
+import { GetCurrentEducationUseCase } from '@use-cases/education/GetCurrentEducationUseCase';
+import { GetEducationUseCase } from '@use-cases/education/GetEducationUseCase';
+import { CreateEducationUseCase } from '@use-cases/education/CreateEducationUseCase';
+import { UpdateEducationUseCase } from '@use-cases/education/UpdateEducationUseCase';
+import { DeleteEducationUseCase } from '@use-cases/education/DeleteEducationUseCase';
 
 const repository = new EducationRepository(AppDataSource.getRepository(EducationEntity));
 const listUseCase = new ListEducationUseCase(repository);
@@ -1847,11 +1943,11 @@ Route order matters: `/current` must be registered before `/:id`, or Express wil
 
 ```typescript
 import { Router } from 'express';
-import { EducationController } from '../controllers/EducationController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateEducationDto } from '../dto/education/CreateEducationDto';
-import { UpdateEducationDto } from '../dto/education/UpdateEducationDto';
+import { EducationController } from '@infrastructure/controllers/EducationController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateEducationDto } from '@infrastructure/dto/education/CreateEducationDto';
+import { UpdateEducationDto } from '@infrastructure/dto/education/UpdateEducationDto';
 
 const router = Router();
 
@@ -1906,9 +2002,9 @@ Same shape as Task 10 (Education) — `findByOrder` + `findCurrent`, same six us
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { ExperienceModel } from '../../domain/models/Experience';
-import { ExperienceEntity } from '../entities/ExperienceEntity';
-import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '@domain/models/Experience';
+import { ExperienceEntity } from '@infrastructure/entities/ExperienceEntity';
+import { IExperienceRepository } from '@domain/interfaces/IExperienceRepository';
 
 export class ExperienceRepository
   extends BaseRepository<ExperienceModel, ExperienceEntity>
@@ -2055,8 +2151,8 @@ Save as `backEnd/src/infrastructure/dto/experience/UpdateExperienceDto.ts`.
 
 ```typescript
 import { ListExperienceUseCase } from './ListExperienceUseCase';
-import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
-import { ExperienceModel } from '../../domain/models/Experience';
+import { IExperienceRepository } from '@domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '@domain/models/Experience';
 
 describe('ListExperienceUseCase', () => {
   it('returns every experience entry ordered by the repository', async () => {
@@ -2078,8 +2174,8 @@ Save as `backEnd/src/use-cases/experience/ListExperienceUseCase.test.ts`. Run: `
 
 `backEnd/src/use-cases/experience/ListExperienceUseCase.ts`:
 ```typescript
-import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
-import { ExperienceModel } from '../../domain/models/Experience';
+import { IExperienceRepository } from '@domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '@domain/models/Experience';
 
 export class ListExperienceUseCase {
   constructor(private readonly repository: IExperienceRepository) {}
@@ -2095,8 +2191,8 @@ Re-run the same test — expect PASS.
 
 ```typescript
 import { GetCurrentExperienceUseCase } from './GetCurrentExperienceUseCase';
-import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
-import { ExperienceModel } from '../../domain/models/Experience';
+import { IExperienceRepository } from '@domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '@domain/models/Experience';
 
 describe('GetCurrentExperienceUseCase', () => {
   it('returns only the current experience entries', async () => {
@@ -2118,8 +2214,8 @@ Save as `backEnd/src/use-cases/experience/GetCurrentExperienceUseCase.test.ts`. 
 
 `backEnd/src/use-cases/experience/GetCurrentExperienceUseCase.ts`:
 ```typescript
-import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
-import { ExperienceModel } from '../../domain/models/Experience';
+import { IExperienceRepository } from '@domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '@domain/models/Experience';
 
 export class GetCurrentExperienceUseCase {
   constructor(private readonly repository: IExperienceRepository) {}
@@ -2135,8 +2231,8 @@ Re-run — expect PASS.
 
 ```typescript
 import { GetExperienceUseCase } from './GetExperienceUseCase';
-import { ExperienceModel } from '../../domain/models/Experience';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ExperienceModel } from '@domain/models/Experience';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IExperienceFinder {
   findById(id: string): Promise<ExperienceModel | null>;
@@ -2165,8 +2261,8 @@ Save as `backEnd/src/use-cases/experience/GetExperienceUseCase.test.ts`. Run it 
 
 `backEnd/src/use-cases/experience/GetExperienceUseCase.ts`:
 ```typescript
-import { ExperienceModel } from '../../domain/models/Experience';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ExperienceModel } from '@domain/models/Experience';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IExperienceFinder {
   findById(id: string): Promise<ExperienceModel | null>;
@@ -2192,7 +2288,7 @@ Re-run — expect PASS.
 
 ```typescript
 import { CreateExperienceUseCase } from './CreateExperienceUseCase';
-import { ExperienceModel } from '../../domain/models/Experience';
+import { ExperienceModel } from '@domain/models/Experience';
 
 interface IExperienceCreator {
   create(data: Partial<ExperienceModel>): Promise<ExperienceModel>;
@@ -2216,8 +2312,8 @@ Save as `backEnd/src/use-cases/experience/CreateExperienceUseCase.test.ts`. Run 
 
 `backEnd/src/use-cases/experience/CreateExperienceUseCase.ts`:
 ```typescript
-import { ExperienceModel } from '../../domain/models/Experience';
-import { CreateExperienceDto } from '../../infrastructure/dto/experience/CreateExperienceDto';
+import { ExperienceModel } from '@domain/models/Experience';
+import { CreateExperienceDto } from '@infrastructure/dto/experience/CreateExperienceDto';
 
 export interface IExperienceCreator {
   create(data: Partial<ExperienceModel>): Promise<ExperienceModel>;
@@ -2237,8 +2333,8 @@ Re-run — expect PASS.
 
 ```typescript
 import { UpdateExperienceUseCase } from './UpdateExperienceUseCase';
-import { ExperienceModel } from '../../domain/models/Experience';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ExperienceModel } from '@domain/models/Experience';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IExperienceUpdater {
   update(id: string, data: Partial<ExperienceModel>): Promise<ExperienceModel | null>;
@@ -2268,9 +2364,9 @@ Save as `backEnd/src/use-cases/experience/UpdateExperienceUseCase.test.ts`. Run 
 
 `backEnd/src/use-cases/experience/UpdateExperienceUseCase.ts`:
 ```typescript
-import { ExperienceModel } from '../../domain/models/Experience';
-import { UpdateExperienceDto } from '../../infrastructure/dto/experience/UpdateExperienceDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ExperienceModel } from '@domain/models/Experience';
+import { UpdateExperienceDto } from '@infrastructure/dto/experience/UpdateExperienceDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IExperienceUpdater {
   update(id: string, data: Partial<ExperienceModel>): Promise<ExperienceModel | null>;
@@ -2296,7 +2392,7 @@ Re-run — expect PASS.
 
 ```typescript
 import { DeleteExperienceUseCase } from './DeleteExperienceUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IExperienceDeleter {
   delete(id: string): Promise<boolean>;
@@ -2324,7 +2420,7 @@ Save as `backEnd/src/use-cases/experience/DeleteExperienceUseCase.test.ts`. Run 
 
 `backEnd/src/use-cases/experience/DeleteExperienceUseCase.ts`:
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IExperienceDeleter {
   delete(id: string): Promise<boolean>;
@@ -2352,15 +2448,15 @@ Expected: `Tests: 9 passed, 9 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { ExperienceEntity } from '../entities/ExperienceEntity';
-import { ExperienceRepository } from '../repositories/ExperienceRepository';
-import { ListExperienceUseCase } from '../../use-cases/experience/ListExperienceUseCase';
-import { GetCurrentExperienceUseCase } from '../../use-cases/experience/GetCurrentExperienceUseCase';
-import { GetExperienceUseCase } from '../../use-cases/experience/GetExperienceUseCase';
-import { CreateExperienceUseCase } from '../../use-cases/experience/CreateExperienceUseCase';
-import { UpdateExperienceUseCase } from '../../use-cases/experience/UpdateExperienceUseCase';
-import { DeleteExperienceUseCase } from '../../use-cases/experience/DeleteExperienceUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { ExperienceEntity } from '@infrastructure/entities/ExperienceEntity';
+import { ExperienceRepository } from '@infrastructure/repositories/ExperienceRepository';
+import { ListExperienceUseCase } from '@use-cases/experience/ListExperienceUseCase';
+import { GetCurrentExperienceUseCase } from '@use-cases/experience/GetCurrentExperienceUseCase';
+import { GetExperienceUseCase } from '@use-cases/experience/GetExperienceUseCase';
+import { CreateExperienceUseCase } from '@use-cases/experience/CreateExperienceUseCase';
+import { UpdateExperienceUseCase } from '@use-cases/experience/UpdateExperienceUseCase';
+import { DeleteExperienceUseCase } from '@use-cases/experience/DeleteExperienceUseCase';
 
 const repository = new ExperienceRepository(AppDataSource.getRepository(ExperienceEntity));
 const listUseCase = new ListExperienceUseCase(repository);
@@ -2427,11 +2523,11 @@ Save as `backEnd/src/infrastructure/controllers/ExperienceController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { ExperienceController } from '../controllers/ExperienceController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateExperienceDto } from '../dto/experience/CreateExperienceDto';
-import { UpdateExperienceDto } from '../dto/experience/UpdateExperienceDto';
+import { ExperienceController } from '@infrastructure/controllers/ExperienceController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateExperienceDto } from '@infrastructure/dto/experience/CreateExperienceDto';
+import { UpdateExperienceDto } from '@infrastructure/dto/experience/UpdateExperienceDto';
 
 const router = Router();
 
@@ -2484,9 +2580,9 @@ git commit -m "Add Experience resource (repository, use-cases, controller, route
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { ProjectModel } from '../../domain/models/Project';
-import { ProjectEntity } from '../entities/ProjectEntity';
-import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
+import { ProjectModel } from '@domain/models/Project';
+import { ProjectEntity } from '@infrastructure/entities/ProjectEntity';
+import { IProjectRepository } from '@domain/interfaces/IProjectRepository';
 
 export class ProjectRepository
   extends BaseRepository<ProjectModel, ProjectEntity>
@@ -2623,8 +2719,8 @@ Save as `backEnd/src/infrastructure/dto/project/UpdateProjectDto.ts`.
 
 ```typescript
 import { ListProjectUseCase } from './ListProjectUseCase';
-import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
-import { ProjectModel } from '../../domain/models/Project';
+import { IProjectRepository } from '@domain/interfaces/IProjectRepository';
+import { ProjectModel } from '@domain/models/Project';
 
 describe('ListProjectUseCase', () => {
   it('returns every project ordered by the repository', async () => {
@@ -2645,8 +2741,8 @@ describe('ListProjectUseCase', () => {
 Save as `backEnd/src/use-cases/project/ListProjectUseCase.test.ts`. Run: `cd backEnd && npx jest ListProjectUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
-import { ProjectModel } from '../../domain/models/Project';
+import { IProjectRepository } from '@domain/interfaces/IProjectRepository';
+import { ProjectModel } from '@domain/models/Project';
 
 export class ListProjectUseCase {
   constructor(private readonly repository: IProjectRepository) {}
@@ -2662,8 +2758,8 @@ Save as `backEnd/src/use-cases/project/ListProjectUseCase.ts`. Re-run — expect
 
 ```typescript
 import { ListFeaturedProjectUseCase } from './ListFeaturedProjectUseCase';
-import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
-import { ProjectModel } from '../../domain/models/Project';
+import { IProjectRepository } from '@domain/interfaces/IProjectRepository';
+import { ProjectModel } from '@domain/models/Project';
 
 describe('ListFeaturedProjectUseCase', () => {
   it('returns only the featured projects', async () => {
@@ -2684,8 +2780,8 @@ describe('ListFeaturedProjectUseCase', () => {
 Save as `backEnd/src/use-cases/project/ListFeaturedProjectUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
-import { ProjectModel } from '../../domain/models/Project';
+import { IProjectRepository } from '@domain/interfaces/IProjectRepository';
+import { ProjectModel } from '@domain/models/Project';
 
 export class ListFeaturedProjectUseCase {
   constructor(private readonly repository: IProjectRepository) {}
@@ -2701,8 +2797,8 @@ Save as `backEnd/src/use-cases/project/ListFeaturedProjectUseCase.ts`. Re-run �
 
 ```typescript
 import { GetProjectUseCase } from './GetProjectUseCase';
-import { ProjectModel } from '../../domain/models/Project';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ProjectModel } from '@domain/models/Project';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IProjectFinder {
   findById(id: string): Promise<ProjectModel | null>;
@@ -2730,8 +2826,8 @@ describe('GetProjectUseCase', () => {
 Save as `backEnd/src/use-cases/project/GetProjectUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { ProjectModel } from '../../domain/models/Project';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ProjectModel } from '@domain/models/Project';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IProjectFinder {
   findById(id: string): Promise<ProjectModel | null>;
@@ -2757,7 +2853,7 @@ Save as `backEnd/src/use-cases/project/GetProjectUseCase.ts`. Re-run — expect 
 
 ```typescript
 import { CreateProjectUseCase } from './CreateProjectUseCase';
-import { ProjectModel } from '../../domain/models/Project';
+import { ProjectModel } from '@domain/models/Project';
 
 interface IProjectCreator {
   create(data: Partial<ProjectModel>): Promise<ProjectModel>;
@@ -2780,8 +2876,8 @@ describe('CreateProjectUseCase', () => {
 Save as `backEnd/src/use-cases/project/CreateProjectUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { ProjectModel } from '../../domain/models/Project';
-import { CreateProjectDto } from '../../infrastructure/dto/project/CreateProjectDto';
+import { ProjectModel } from '@domain/models/Project';
+import { CreateProjectDto } from '@infrastructure/dto/project/CreateProjectDto';
 
 export interface IProjectCreator {
   create(data: Partial<ProjectModel>): Promise<ProjectModel>;
@@ -2801,8 +2897,8 @@ Save as `backEnd/src/use-cases/project/CreateProjectUseCase.ts`. Re-run — expe
 
 ```typescript
 import { UpdateProjectUseCase } from './UpdateProjectUseCase';
-import { ProjectModel } from '../../domain/models/Project';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ProjectModel } from '@domain/models/Project';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IProjectUpdater {
   update(id: string, data: Partial<ProjectModel>): Promise<ProjectModel | null>;
@@ -2831,9 +2927,9 @@ describe('UpdateProjectUseCase', () => {
 Save as `backEnd/src/use-cases/project/UpdateProjectUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { ProjectModel } from '../../domain/models/Project';
-import { UpdateProjectDto } from '../../infrastructure/dto/project/UpdateProjectDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { ProjectModel } from '@domain/models/Project';
+import { UpdateProjectDto } from '@infrastructure/dto/project/UpdateProjectDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IProjectUpdater {
   update(id: string, data: Partial<ProjectModel>): Promise<ProjectModel | null>;
@@ -2859,7 +2955,7 @@ Save as `backEnd/src/use-cases/project/UpdateProjectUseCase.ts`. Re-run — expe
 
 ```typescript
 import { DeleteProjectUseCase } from './DeleteProjectUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IProjectDeleter {
   delete(id: string): Promise<boolean>;
@@ -2886,7 +2982,7 @@ describe('DeleteProjectUseCase', () => {
 Save as `backEnd/src/use-cases/project/DeleteProjectUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IProjectDeleter {
   delete(id: string): Promise<boolean>;
@@ -2915,15 +3011,15 @@ Expected: `Tests: 9 passed, 9 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { ProjectEntity } from '../entities/ProjectEntity';
-import { ProjectRepository } from '../repositories/ProjectRepository';
-import { ListProjectUseCase } from '../../use-cases/project/ListProjectUseCase';
-import { ListFeaturedProjectUseCase } from '../../use-cases/project/ListFeaturedProjectUseCase';
-import { GetProjectUseCase } from '../../use-cases/project/GetProjectUseCase';
-import { CreateProjectUseCase } from '../../use-cases/project/CreateProjectUseCase';
-import { UpdateProjectUseCase } from '../../use-cases/project/UpdateProjectUseCase';
-import { DeleteProjectUseCase } from '../../use-cases/project/DeleteProjectUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { ProjectEntity } from '@infrastructure/entities/ProjectEntity';
+import { ProjectRepository } from '@infrastructure/repositories/ProjectRepository';
+import { ListProjectUseCase } from '@use-cases/project/ListProjectUseCase';
+import { ListFeaturedProjectUseCase } from '@use-cases/project/ListFeaturedProjectUseCase';
+import { GetProjectUseCase } from '@use-cases/project/GetProjectUseCase';
+import { CreateProjectUseCase } from '@use-cases/project/CreateProjectUseCase';
+import { UpdateProjectUseCase } from '@use-cases/project/UpdateProjectUseCase';
+import { DeleteProjectUseCase } from '@use-cases/project/DeleteProjectUseCase';
 
 const repository = new ProjectRepository(AppDataSource.getRepository(ProjectEntity));
 const listUseCase = new ListProjectUseCase(repository);
@@ -2985,11 +3081,11 @@ Per the spec's route table, "featured" is a query param on the list endpoint (`G
 
 ```typescript
 import { Router } from 'express';
-import { ProjectController } from '../controllers/ProjectController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateProjectDto } from '../dto/project/CreateProjectDto';
-import { UpdateProjectDto } from '../dto/project/UpdateProjectDto';
+import { ProjectController } from '@infrastructure/controllers/ProjectController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateProjectDto } from '@infrastructure/dto/project/CreateProjectDto';
+import { UpdateProjectDto } from '@infrastructure/dto/project/UpdateProjectDto';
 
 const router = Router();
 
@@ -3042,9 +3138,9 @@ git commit -m "Add Project resource (repository, use-cases, controller, route)"
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { SkillModel } from '../../domain/models/Skill';
-import { SkillEntity } from '../entities/SkillEntity';
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { SkillModel } from '@domain/models/Skill';
+import { SkillEntity } from '@infrastructure/entities/SkillEntity';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
 
 export class SkillRepository extends BaseRepository<SkillModel, SkillEntity> implements ISkillRepository {
   constructor(repository: Repository<SkillEntity>) {
@@ -3153,8 +3249,8 @@ Save as `backEnd/src/infrastructure/dto/skill/UpdateSkillDto.ts`.
 
 ```typescript
 import { ListSkillUseCase } from './ListSkillUseCase';
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
-import { SkillModel } from '../../domain/models/Skill';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
+import { SkillModel } from '@domain/models/Skill';
 
 describe('ListSkillUseCase', () => {
   it('returns every skill ordered by the repository', async () => {
@@ -3176,8 +3272,8 @@ describe('ListSkillUseCase', () => {
 Save as `backEnd/src/use-cases/skill/ListSkillUseCase.test.ts`. Run: `cd backEnd && npx jest ListSkillUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
-import { SkillModel } from '../../domain/models/Skill';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
+import { SkillModel } from '@domain/models/Skill';
 
 export class ListSkillUseCase {
   constructor(private readonly repository: ISkillRepository) {}
@@ -3193,8 +3289,8 @@ Save as `backEnd/src/use-cases/skill/ListSkillUseCase.ts`. Re-run — expect PAS
 
 ```typescript
 import { ListSkillByCategoryUseCase } from './ListSkillByCategoryUseCase';
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
-import { SkillModel } from '../../domain/models/Skill';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
+import { SkillModel } from '@domain/models/Skill';
 
 describe('ListSkillByCategoryUseCase', () => {
   it('returns skills filtered by category', async () => {
@@ -3216,8 +3312,8 @@ describe('ListSkillByCategoryUseCase', () => {
 Save as `backEnd/src/use-cases/skill/ListSkillByCategoryUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
-import { SkillModel } from '../../domain/models/Skill';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
+import { SkillModel } from '@domain/models/Skill';
 
 export class ListSkillByCategoryUseCase {
   constructor(private readonly repository: ISkillRepository) {}
@@ -3233,7 +3329,7 @@ Save as `backEnd/src/use-cases/skill/ListSkillByCategoryUseCase.ts`. Re-run — 
 
 ```typescript
 import { ListSkillCategoriesUseCase } from './ListSkillCategoriesUseCase';
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
 
 describe('ListSkillCategoriesUseCase', () => {
   it('returns the distinct category list', async () => {
@@ -3254,7 +3350,7 @@ describe('ListSkillCategoriesUseCase', () => {
 Save as `backEnd/src/use-cases/skill/ListSkillCategoriesUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
 
 export class ListSkillCategoriesUseCase {
   constructor(private readonly repository: ISkillRepository) {}
@@ -3270,8 +3366,8 @@ Save as `backEnd/src/use-cases/skill/ListSkillCategoriesUseCase.ts`. Re-run — 
 
 ```typescript
 import { GetSkillUseCase } from './GetSkillUseCase';
-import { SkillModel } from '../../domain/models/Skill';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SkillModel } from '@domain/models/Skill';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ISkillFinder {
   findById(id: string): Promise<SkillModel | null>;
@@ -3299,8 +3395,8 @@ describe('GetSkillUseCase', () => {
 Save as `backEnd/src/use-cases/skill/GetSkillUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { SkillModel } from '../../domain/models/Skill';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SkillModel } from '@domain/models/Skill';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ISkillFinder {
   findById(id: string): Promise<SkillModel | null>;
@@ -3326,7 +3422,7 @@ Save as `backEnd/src/use-cases/skill/GetSkillUseCase.ts`. Re-run — expect PASS
 
 ```typescript
 import { CreateSkillUseCase } from './CreateSkillUseCase';
-import { SkillModel } from '../../domain/models/Skill';
+import { SkillModel } from '@domain/models/Skill';
 
 interface ISkillCreator {
   create(data: Partial<SkillModel>): Promise<SkillModel>;
@@ -3349,8 +3445,8 @@ describe('CreateSkillUseCase', () => {
 Save as `backEnd/src/use-cases/skill/CreateSkillUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { SkillModel } from '../../domain/models/Skill';
-import { CreateSkillDto } from '../../infrastructure/dto/skill/CreateSkillDto';
+import { SkillModel } from '@domain/models/Skill';
+import { CreateSkillDto } from '@infrastructure/dto/skill/CreateSkillDto';
 
 export interface ISkillCreator {
   create(data: Partial<SkillModel>): Promise<SkillModel>;
@@ -3370,8 +3466,8 @@ Save as `backEnd/src/use-cases/skill/CreateSkillUseCase.ts`. Re-run — expect P
 
 ```typescript
 import { UpdateSkillUseCase } from './UpdateSkillUseCase';
-import { SkillModel } from '../../domain/models/Skill';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SkillModel } from '@domain/models/Skill';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ISkillUpdater {
   update(id: string, data: Partial<SkillModel>): Promise<SkillModel | null>;
@@ -3400,9 +3496,9 @@ describe('UpdateSkillUseCase', () => {
 Save as `backEnd/src/use-cases/skill/UpdateSkillUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { SkillModel } from '../../domain/models/Skill';
-import { UpdateSkillDto } from '../../infrastructure/dto/skill/UpdateSkillDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SkillModel } from '@domain/models/Skill';
+import { UpdateSkillDto } from '@infrastructure/dto/skill/UpdateSkillDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ISkillUpdater {
   update(id: string, data: Partial<SkillModel>): Promise<SkillModel | null>;
@@ -3428,7 +3524,7 @@ Save as `backEnd/src/use-cases/skill/UpdateSkillUseCase.ts`. Re-run — expect P
 
 ```typescript
 import { DeleteSkillUseCase } from './DeleteSkillUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ISkillDeleter {
   delete(id: string): Promise<boolean>;
@@ -3455,7 +3551,7 @@ describe('DeleteSkillUseCase', () => {
 Save as `backEnd/src/use-cases/skill/DeleteSkillUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ISkillDeleter {
   delete(id: string): Promise<boolean>;
@@ -3484,16 +3580,16 @@ Expected: `Tests: 10 passed, 10 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { SkillEntity } from '../entities/SkillEntity';
-import { SkillRepository } from '../repositories/SkillRepository';
-import { ListSkillUseCase } from '../../use-cases/skill/ListSkillUseCase';
-import { ListSkillByCategoryUseCase } from '../../use-cases/skill/ListSkillByCategoryUseCase';
-import { ListSkillCategoriesUseCase } from '../../use-cases/skill/ListSkillCategoriesUseCase';
-import { GetSkillUseCase } from '../../use-cases/skill/GetSkillUseCase';
-import { CreateSkillUseCase } from '../../use-cases/skill/CreateSkillUseCase';
-import { UpdateSkillUseCase } from '../../use-cases/skill/UpdateSkillUseCase';
-import { DeleteSkillUseCase } from '../../use-cases/skill/DeleteSkillUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { SkillEntity } from '@infrastructure/entities/SkillEntity';
+import { SkillRepository } from '@infrastructure/repositories/SkillRepository';
+import { ListSkillUseCase } from '@use-cases/skill/ListSkillUseCase';
+import { ListSkillByCategoryUseCase } from '@use-cases/skill/ListSkillByCategoryUseCase';
+import { ListSkillCategoriesUseCase } from '@use-cases/skill/ListSkillCategoriesUseCase';
+import { GetSkillUseCase } from '@use-cases/skill/GetSkillUseCase';
+import { CreateSkillUseCase } from '@use-cases/skill/CreateSkillUseCase';
+import { UpdateSkillUseCase } from '@use-cases/skill/UpdateSkillUseCase';
+import { DeleteSkillUseCase } from '@use-cases/skill/DeleteSkillUseCase';
 
 const repository = new SkillRepository(AppDataSource.getRepository(SkillEntity));
 const listUseCase = new ListSkillUseCase(repository);
@@ -3565,11 +3661,11 @@ Save as `backEnd/src/infrastructure/controllers/SkillController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { SkillController } from '../controllers/SkillController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateSkillDto } from '../dto/skill/CreateSkillDto';
-import { UpdateSkillDto } from '../dto/skill/UpdateSkillDto';
+import { SkillController } from '@infrastructure/controllers/SkillController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateSkillDto } from '@infrastructure/dto/skill/CreateSkillDto';
+import { UpdateSkillDto } from '@infrastructure/dto/skill/UpdateSkillDto';
 
 const router = Router();
 
@@ -3623,9 +3719,9 @@ Simplest shape in this plan — only `findByOrder`, five use-cases (no extra que
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { SocialLinkModel } from '../../domain/models/SocialLink';
-import { SocialLinkEntity } from '../entities/SocialLinkEntity';
-import { ISocialLinkRepository } from '../../domain/interfaces/ISocialLinkRepository';
+import { SocialLinkModel } from '@domain/models/SocialLink';
+import { SocialLinkEntity } from '@infrastructure/entities/SocialLinkEntity';
+import { ISocialLinkRepository } from '@domain/interfaces/ISocialLinkRepository';
 
 export class SocialLinkRepository
   extends BaseRepository<SocialLinkModel, SocialLinkEntity>
@@ -3709,8 +3805,8 @@ Save as `backEnd/src/infrastructure/dto/social-link/UpdateSocialLinkDto.ts`.
 
 ```typescript
 import { ListSocialLinkUseCase } from './ListSocialLinkUseCase';
-import { ISocialLinkRepository } from '../../domain/interfaces/ISocialLinkRepository';
-import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { ISocialLinkRepository } from '@domain/interfaces/ISocialLinkRepository';
+import { SocialLinkModel } from '@domain/models/SocialLink';
 
 describe('ListSocialLinkUseCase', () => {
   it('returns every social link ordered by the repository', async () => {
@@ -3728,8 +3824,8 @@ describe('ListSocialLinkUseCase', () => {
 Save as `backEnd/src/use-cases/social-link/ListSocialLinkUseCase.test.ts`. Run: `cd backEnd && npx jest ListSocialLinkUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { ISocialLinkRepository } from '../../domain/interfaces/ISocialLinkRepository';
-import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { ISocialLinkRepository } from '@domain/interfaces/ISocialLinkRepository';
+import { SocialLinkModel } from '@domain/models/SocialLink';
 
 export class ListSocialLinkUseCase {
   constructor(private readonly repository: ISocialLinkRepository) {}
@@ -3745,8 +3841,8 @@ Save as `backEnd/src/use-cases/social-link/ListSocialLinkUseCase.ts`. Re-run —
 
 ```typescript
 import { GetSocialLinkUseCase } from './GetSocialLinkUseCase';
-import { SocialLinkModel } from '../../domain/models/SocialLink';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SocialLinkModel } from '@domain/models/SocialLink';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ISocialLinkFinder {
   findById(id: string): Promise<SocialLinkModel | null>;
@@ -3774,8 +3870,8 @@ describe('GetSocialLinkUseCase', () => {
 Save as `backEnd/src/use-cases/social-link/GetSocialLinkUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { SocialLinkModel } from '../../domain/models/SocialLink';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SocialLinkModel } from '@domain/models/SocialLink';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ISocialLinkFinder {
   findById(id: string): Promise<SocialLinkModel | null>;
@@ -3801,7 +3897,7 @@ Save as `backEnd/src/use-cases/social-link/GetSocialLinkUseCase.ts`. Re-run — 
 
 ```typescript
 import { CreateSocialLinkUseCase } from './CreateSocialLinkUseCase';
-import { SocialLinkModel } from '../../domain/models/SocialLink';
+import { SocialLinkModel } from '@domain/models/SocialLink';
 
 interface ISocialLinkCreator {
   create(data: Partial<SocialLinkModel>): Promise<SocialLinkModel>;
@@ -3824,8 +3920,8 @@ describe('CreateSocialLinkUseCase', () => {
 Save as `backEnd/src/use-cases/social-link/CreateSocialLinkUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { SocialLinkModel } from '../../domain/models/SocialLink';
-import { CreateSocialLinkDto } from '../../infrastructure/dto/social-link/CreateSocialLinkDto';
+import { SocialLinkModel } from '@domain/models/SocialLink';
+import { CreateSocialLinkDto } from '@infrastructure/dto/social-link/CreateSocialLinkDto';
 
 export interface ISocialLinkCreator {
   create(data: Partial<SocialLinkModel>): Promise<SocialLinkModel>;
@@ -3845,8 +3941,8 @@ Save as `backEnd/src/use-cases/social-link/CreateSocialLinkUseCase.ts`. Re-run �
 
 ```typescript
 import { UpdateSocialLinkUseCase } from './UpdateSocialLinkUseCase';
-import { SocialLinkModel } from '../../domain/models/SocialLink';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SocialLinkModel } from '@domain/models/SocialLink';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ISocialLinkUpdater {
   update(id: string, data: Partial<SocialLinkModel>): Promise<SocialLinkModel | null>;
@@ -3875,9 +3971,9 @@ describe('UpdateSocialLinkUseCase', () => {
 Save as `backEnd/src/use-cases/social-link/UpdateSocialLinkUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { SocialLinkModel } from '../../domain/models/SocialLink';
-import { UpdateSocialLinkDto } from '../../infrastructure/dto/social-link/UpdateSocialLinkDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { SocialLinkModel } from '@domain/models/SocialLink';
+import { UpdateSocialLinkDto } from '@infrastructure/dto/social-link/UpdateSocialLinkDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ISocialLinkUpdater {
   update(id: string, data: Partial<SocialLinkModel>): Promise<SocialLinkModel | null>;
@@ -3903,7 +3999,7 @@ Save as `backEnd/src/use-cases/social-link/UpdateSocialLinkUseCase.ts`. Re-run �
 
 ```typescript
 import { DeleteSocialLinkUseCase } from './DeleteSocialLinkUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ISocialLinkDeleter {
   delete(id: string): Promise<boolean>;
@@ -3930,7 +4026,7 @@ describe('DeleteSocialLinkUseCase', () => {
 Save as `backEnd/src/use-cases/social-link/DeleteSocialLinkUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ISocialLinkDeleter {
   delete(id: string): Promise<boolean>;
@@ -3959,14 +4055,14 @@ Expected: `Tests: 7 passed, 7 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { SocialLinkEntity } from '../entities/SocialLinkEntity';
-import { SocialLinkRepository } from '../repositories/SocialLinkRepository';
-import { ListSocialLinkUseCase } from '../../use-cases/social-link/ListSocialLinkUseCase';
-import { GetSocialLinkUseCase } from '../../use-cases/social-link/GetSocialLinkUseCase';
-import { CreateSocialLinkUseCase } from '../../use-cases/social-link/CreateSocialLinkUseCase';
-import { UpdateSocialLinkUseCase } from '../../use-cases/social-link/UpdateSocialLinkUseCase';
-import { DeleteSocialLinkUseCase } from '../../use-cases/social-link/DeleteSocialLinkUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { SocialLinkEntity } from '@infrastructure/entities/SocialLinkEntity';
+import { SocialLinkRepository } from '@infrastructure/repositories/SocialLinkRepository';
+import { ListSocialLinkUseCase } from '@use-cases/social-link/ListSocialLinkUseCase';
+import { GetSocialLinkUseCase } from '@use-cases/social-link/GetSocialLinkUseCase';
+import { CreateSocialLinkUseCase } from '@use-cases/social-link/CreateSocialLinkUseCase';
+import { UpdateSocialLinkUseCase } from '@use-cases/social-link/UpdateSocialLinkUseCase';
+import { DeleteSocialLinkUseCase } from '@use-cases/social-link/DeleteSocialLinkUseCase';
 
 const repository = new SocialLinkRepository(AppDataSource.getRepository(SocialLinkEntity));
 const listUseCase = new ListSocialLinkUseCase(repository);
@@ -4024,11 +4120,11 @@ Save as `backEnd/src/infrastructure/controllers/SocialLinkController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { SocialLinkController } from '../controllers/SocialLinkController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateSocialLinkDto } from '../dto/social-link/CreateSocialLinkDto';
-import { UpdateSocialLinkDto } from '../dto/social-link/UpdateSocialLinkDto';
+import { SocialLinkController } from '@infrastructure/controllers/SocialLinkController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateSocialLinkDto } from '@infrastructure/dto/social-link/CreateSocialLinkDto';
+import { UpdateSocialLinkDto } from '@infrastructure/dto/social-link/UpdateSocialLinkDto';
 
 const router = Router();
 
@@ -4081,9 +4177,9 @@ Same simple shape as Task 14 (SocialLink) — only `findByOrder`, five use-cases
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { StrengthModel } from '../../domain/models/Strength';
-import { StrengthEntity } from '../entities/StrengthEntity';
-import { IStrengthRepository } from '../../domain/interfaces/IStrengthRepository';
+import { StrengthModel } from '@domain/models/Strength';
+import { StrengthEntity } from '@infrastructure/entities/StrengthEntity';
+import { IStrengthRepository } from '@domain/interfaces/IStrengthRepository';
 
 export class StrengthRepository
   extends BaseRepository<StrengthModel, StrengthEntity>
@@ -4160,8 +4256,8 @@ Save as `backEnd/src/infrastructure/dto/strength/UpdateStrengthDto.ts`.
 
 ```typescript
 import { ListStrengthUseCase } from './ListStrengthUseCase';
-import { IStrengthRepository } from '../../domain/interfaces/IStrengthRepository';
-import { StrengthModel } from '../../domain/models/Strength';
+import { IStrengthRepository } from '@domain/interfaces/IStrengthRepository';
+import { StrengthModel } from '@domain/models/Strength';
 
 describe('ListStrengthUseCase', () => {
   it('returns every strength ordered by the repository', async () => {
@@ -4179,8 +4275,8 @@ describe('ListStrengthUseCase', () => {
 Save as `backEnd/src/use-cases/strength/ListStrengthUseCase.test.ts`. Run: `cd backEnd && npx jest ListStrengthUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { IStrengthRepository } from '../../domain/interfaces/IStrengthRepository';
-import { StrengthModel } from '../../domain/models/Strength';
+import { IStrengthRepository } from '@domain/interfaces/IStrengthRepository';
+import { StrengthModel } from '@domain/models/Strength';
 
 export class ListStrengthUseCase {
   constructor(private readonly repository: IStrengthRepository) {}
@@ -4196,8 +4292,8 @@ Save as `backEnd/src/use-cases/strength/ListStrengthUseCase.ts`. Re-run — expe
 
 ```typescript
 import { GetStrengthUseCase } from './GetStrengthUseCase';
-import { StrengthModel } from '../../domain/models/Strength';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { StrengthModel } from '@domain/models/Strength';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IStrengthFinder {
   findById(id: string): Promise<StrengthModel | null>;
@@ -4225,8 +4321,8 @@ describe('GetStrengthUseCase', () => {
 Save as `backEnd/src/use-cases/strength/GetStrengthUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { StrengthModel } from '../../domain/models/Strength';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { StrengthModel } from '@domain/models/Strength';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IStrengthFinder {
   findById(id: string): Promise<StrengthModel | null>;
@@ -4252,7 +4348,7 @@ Save as `backEnd/src/use-cases/strength/GetStrengthUseCase.ts`. Re-run — expec
 
 ```typescript
 import { CreateStrengthUseCase } from './CreateStrengthUseCase';
-import { StrengthModel } from '../../domain/models/Strength';
+import { StrengthModel } from '@domain/models/Strength';
 
 interface IStrengthCreator {
   create(data: Partial<StrengthModel>): Promise<StrengthModel>;
@@ -4275,8 +4371,8 @@ describe('CreateStrengthUseCase', () => {
 Save as `backEnd/src/use-cases/strength/CreateStrengthUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { StrengthModel } from '../../domain/models/Strength';
-import { CreateStrengthDto } from '../../infrastructure/dto/strength/CreateStrengthDto';
+import { StrengthModel } from '@domain/models/Strength';
+import { CreateStrengthDto } from '@infrastructure/dto/strength/CreateStrengthDto';
 
 export interface IStrengthCreator {
   create(data: Partial<StrengthModel>): Promise<StrengthModel>;
@@ -4296,8 +4392,8 @@ Save as `backEnd/src/use-cases/strength/CreateStrengthUseCase.ts`. Re-run — ex
 
 ```typescript
 import { UpdateStrengthUseCase } from './UpdateStrengthUseCase';
-import { StrengthModel } from '../../domain/models/Strength';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { StrengthModel } from '@domain/models/Strength';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IStrengthUpdater {
   update(id: string, data: Partial<StrengthModel>): Promise<StrengthModel | null>;
@@ -4326,9 +4422,9 @@ describe('UpdateStrengthUseCase', () => {
 Save as `backEnd/src/use-cases/strength/UpdateStrengthUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { StrengthModel } from '../../domain/models/Strength';
-import { UpdateStrengthDto } from '../../infrastructure/dto/strength/UpdateStrengthDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { StrengthModel } from '@domain/models/Strength';
+import { UpdateStrengthDto } from '@infrastructure/dto/strength/UpdateStrengthDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IStrengthUpdater {
   update(id: string, data: Partial<StrengthModel>): Promise<StrengthModel | null>;
@@ -4354,7 +4450,7 @@ Save as `backEnd/src/use-cases/strength/UpdateStrengthUseCase.ts`. Re-run — ex
 
 ```typescript
 import { DeleteStrengthUseCase } from './DeleteStrengthUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IStrengthDeleter {
   delete(id: string): Promise<boolean>;
@@ -4381,7 +4477,7 @@ describe('DeleteStrengthUseCase', () => {
 Save as `backEnd/src/use-cases/strength/DeleteStrengthUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IStrengthDeleter {
   delete(id: string): Promise<boolean>;
@@ -4410,14 +4506,14 @@ Expected: `Tests: 7 passed, 7 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { StrengthEntity } from '../entities/StrengthEntity';
-import { StrengthRepository } from '../repositories/StrengthRepository';
-import { ListStrengthUseCase } from '../../use-cases/strength/ListStrengthUseCase';
-import { GetStrengthUseCase } from '../../use-cases/strength/GetStrengthUseCase';
-import { CreateStrengthUseCase } from '../../use-cases/strength/CreateStrengthUseCase';
-import { UpdateStrengthUseCase } from '../../use-cases/strength/UpdateStrengthUseCase';
-import { DeleteStrengthUseCase } from '../../use-cases/strength/DeleteStrengthUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { StrengthEntity } from '@infrastructure/entities/StrengthEntity';
+import { StrengthRepository } from '@infrastructure/repositories/StrengthRepository';
+import { ListStrengthUseCase } from '@use-cases/strength/ListStrengthUseCase';
+import { GetStrengthUseCase } from '@use-cases/strength/GetStrengthUseCase';
+import { CreateStrengthUseCase } from '@use-cases/strength/CreateStrengthUseCase';
+import { UpdateStrengthUseCase } from '@use-cases/strength/UpdateStrengthUseCase';
+import { DeleteStrengthUseCase } from '@use-cases/strength/DeleteStrengthUseCase';
 
 const repository = new StrengthRepository(AppDataSource.getRepository(StrengthEntity));
 const listUseCase = new ListStrengthUseCase(repository);
@@ -4475,11 +4571,11 @@ Save as `backEnd/src/infrastructure/controllers/StrengthController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { StrengthController } from '../controllers/StrengthController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateStrengthDto } from '../dto/strength/CreateStrengthDto';
-import { UpdateStrengthDto } from '../dto/strength/UpdateStrengthDto';
+import { StrengthController } from '@infrastructure/controllers/StrengthController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateStrengthDto } from '@infrastructure/dto/strength/CreateStrengthDto';
+import { UpdateStrengthDto } from '@infrastructure/dto/strength/UpdateStrengthDto';
 
 const router = Router();
 
@@ -4532,9 +4628,9 @@ Same simple shape as Task 15 (Strength) — `title`, `description`, `order`, onl
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { InterestModel } from '../../domain/models/Interest';
-import { InterestEntity } from '../entities/InterestEntity';
-import { IInterestRepository } from '../../domain/interfaces/IInterestRepository';
+import { InterestModel } from '@domain/models/Interest';
+import { InterestEntity } from '@infrastructure/entities/InterestEntity';
+import { IInterestRepository } from '@domain/interfaces/IInterestRepository';
 
 export class InterestRepository
   extends BaseRepository<InterestModel, InterestEntity>
@@ -4611,8 +4707,8 @@ Save as `backEnd/src/infrastructure/dto/interest/UpdateInterestDto.ts`.
 
 ```typescript
 import { ListInterestUseCase } from './ListInterestUseCase';
-import { IInterestRepository } from '../../domain/interfaces/IInterestRepository';
-import { InterestModel } from '../../domain/models/Interest';
+import { IInterestRepository } from '@domain/interfaces/IInterestRepository';
+import { InterestModel } from '@domain/models/Interest';
 
 describe('ListInterestUseCase', () => {
   it('returns every interest ordered by the repository', async () => {
@@ -4630,8 +4726,8 @@ describe('ListInterestUseCase', () => {
 Save as `backEnd/src/use-cases/interest/ListInterestUseCase.test.ts`. Run: `cd backEnd && npx jest ListInterestUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { IInterestRepository } from '../../domain/interfaces/IInterestRepository';
-import { InterestModel } from '../../domain/models/Interest';
+import { IInterestRepository } from '@domain/interfaces/IInterestRepository';
+import { InterestModel } from '@domain/models/Interest';
 
 export class ListInterestUseCase {
   constructor(private readonly repository: IInterestRepository) {}
@@ -4647,8 +4743,8 @@ Save as `backEnd/src/use-cases/interest/ListInterestUseCase.ts`. Re-run — expe
 
 ```typescript
 import { GetInterestUseCase } from './GetInterestUseCase';
-import { InterestModel } from '../../domain/models/Interest';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { InterestModel } from '@domain/models/Interest';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IInterestFinder {
   findById(id: string): Promise<InterestModel | null>;
@@ -4676,8 +4772,8 @@ describe('GetInterestUseCase', () => {
 Save as `backEnd/src/use-cases/interest/GetInterestUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { InterestModel } from '../../domain/models/Interest';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { InterestModel } from '@domain/models/Interest';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IInterestFinder {
   findById(id: string): Promise<InterestModel | null>;
@@ -4703,7 +4799,7 @@ Save as `backEnd/src/use-cases/interest/GetInterestUseCase.ts`. Re-run — expec
 
 ```typescript
 import { CreateInterestUseCase } from './CreateInterestUseCase';
-import { InterestModel } from '../../domain/models/Interest';
+import { InterestModel } from '@domain/models/Interest';
 
 interface IInterestCreator {
   create(data: Partial<InterestModel>): Promise<InterestModel>;
@@ -4726,8 +4822,8 @@ describe('CreateInterestUseCase', () => {
 Save as `backEnd/src/use-cases/interest/CreateInterestUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { InterestModel } from '../../domain/models/Interest';
-import { CreateInterestDto } from '../../infrastructure/dto/interest/CreateInterestDto';
+import { InterestModel } from '@domain/models/Interest';
+import { CreateInterestDto } from '@infrastructure/dto/interest/CreateInterestDto';
 
 export interface IInterestCreator {
   create(data: Partial<InterestModel>): Promise<InterestModel>;
@@ -4747,8 +4843,8 @@ Save as `backEnd/src/use-cases/interest/CreateInterestUseCase.ts`. Re-run — ex
 
 ```typescript
 import { UpdateInterestUseCase } from './UpdateInterestUseCase';
-import { InterestModel } from '../../domain/models/Interest';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { InterestModel } from '@domain/models/Interest';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IInterestUpdater {
   update(id: string, data: Partial<InterestModel>): Promise<InterestModel | null>;
@@ -4777,9 +4873,9 @@ describe('UpdateInterestUseCase', () => {
 Save as `backEnd/src/use-cases/interest/UpdateInterestUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { InterestModel } from '../../domain/models/Interest';
-import { UpdateInterestDto } from '../../infrastructure/dto/interest/UpdateInterestDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { InterestModel } from '@domain/models/Interest';
+import { UpdateInterestDto } from '@infrastructure/dto/interest/UpdateInterestDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IInterestUpdater {
   update(id: string, data: Partial<InterestModel>): Promise<InterestModel | null>;
@@ -4805,7 +4901,7 @@ Save as `backEnd/src/use-cases/interest/UpdateInterestUseCase.ts`. Re-run — ex
 
 ```typescript
 import { DeleteInterestUseCase } from './DeleteInterestUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IInterestDeleter {
   delete(id: string): Promise<boolean>;
@@ -4832,7 +4928,7 @@ describe('DeleteInterestUseCase', () => {
 Save as `backEnd/src/use-cases/interest/DeleteInterestUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IInterestDeleter {
   delete(id: string): Promise<boolean>;
@@ -4861,14 +4957,14 @@ Expected: `Tests: 7 passed, 7 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { InterestEntity } from '../entities/InterestEntity';
-import { InterestRepository } from '../repositories/InterestRepository';
-import { ListInterestUseCase } from '../../use-cases/interest/ListInterestUseCase';
-import { GetInterestUseCase } from '../../use-cases/interest/GetInterestUseCase';
-import { CreateInterestUseCase } from '../../use-cases/interest/CreateInterestUseCase';
-import { UpdateInterestUseCase } from '../../use-cases/interest/UpdateInterestUseCase';
-import { DeleteInterestUseCase } from '../../use-cases/interest/DeleteInterestUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { InterestEntity } from '@infrastructure/entities/InterestEntity';
+import { InterestRepository } from '@infrastructure/repositories/InterestRepository';
+import { ListInterestUseCase } from '@use-cases/interest/ListInterestUseCase';
+import { GetInterestUseCase } from '@use-cases/interest/GetInterestUseCase';
+import { CreateInterestUseCase } from '@use-cases/interest/CreateInterestUseCase';
+import { UpdateInterestUseCase } from '@use-cases/interest/UpdateInterestUseCase';
+import { DeleteInterestUseCase } from '@use-cases/interest/DeleteInterestUseCase';
 
 const repository = new InterestRepository(AppDataSource.getRepository(InterestEntity));
 const listUseCase = new ListInterestUseCase(repository);
@@ -4926,11 +5022,11 @@ Save as `backEnd/src/infrastructure/controllers/InterestController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { InterestController } from '../controllers/InterestController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateInterestDto } from '../dto/interest/CreateInterestDto';
-import { UpdateInterestDto } from '../dto/interest/UpdateInterestDto';
+import { InterestController } from '@infrastructure/controllers/InterestController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateInterestDto } from '@infrastructure/dto/interest/CreateInterestDto';
+import { UpdateInterestDto } from '@infrastructure/dto/interest/UpdateInterestDto';
 
 const router = Router();
 
@@ -4983,9 +5079,9 @@ Same simple shape as Task 15/16 — `title`, `level` (string, e.g. "native"/"flu
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { LanguageModel } from '../../domain/models/Language';
-import { LanguageEntity } from '../entities/LanguageEntity';
-import { ILanguageRepository } from '../../domain/interfaces/ILanguageRepository';
+import { LanguageModel } from '@domain/models/Language';
+import { LanguageEntity } from '@infrastructure/entities/LanguageEntity';
+import { ILanguageRepository } from '@domain/interfaces/ILanguageRepository';
 
 export class LanguageRepository
   extends BaseRepository<LanguageModel, LanguageEntity>
@@ -5062,8 +5158,8 @@ Save as `backEnd/src/infrastructure/dto/language/UpdateLanguageDto.ts`.
 
 ```typescript
 import { ListLanguageUseCase } from './ListLanguageUseCase';
-import { ILanguageRepository } from '../../domain/interfaces/ILanguageRepository';
-import { LanguageModel } from '../../domain/models/Language';
+import { ILanguageRepository } from '@domain/interfaces/ILanguageRepository';
+import { LanguageModel } from '@domain/models/Language';
 
 describe('ListLanguageUseCase', () => {
   it('returns every language ordered by the repository', async () => {
@@ -5081,8 +5177,8 @@ describe('ListLanguageUseCase', () => {
 Save as `backEnd/src/use-cases/language/ListLanguageUseCase.test.ts`. Run: `cd backEnd && npx jest ListLanguageUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { ILanguageRepository } from '../../domain/interfaces/ILanguageRepository';
-import { LanguageModel } from '../../domain/models/Language';
+import { ILanguageRepository } from '@domain/interfaces/ILanguageRepository';
+import { LanguageModel } from '@domain/models/Language';
 
 export class ListLanguageUseCase {
   constructor(private readonly repository: ILanguageRepository) {}
@@ -5098,8 +5194,8 @@ Save as `backEnd/src/use-cases/language/ListLanguageUseCase.ts`. Re-run — expe
 
 ```typescript
 import { GetLanguageUseCase } from './GetLanguageUseCase';
-import { LanguageModel } from '../../domain/models/Language';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { LanguageModel } from '@domain/models/Language';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ILanguageFinder {
   findById(id: string): Promise<LanguageModel | null>;
@@ -5127,8 +5223,8 @@ describe('GetLanguageUseCase', () => {
 Save as `backEnd/src/use-cases/language/GetLanguageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { LanguageModel } from '../../domain/models/Language';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { LanguageModel } from '@domain/models/Language';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ILanguageFinder {
   findById(id: string): Promise<LanguageModel | null>;
@@ -5154,7 +5250,7 @@ Save as `backEnd/src/use-cases/language/GetLanguageUseCase.ts`. Re-run — expec
 
 ```typescript
 import { CreateLanguageUseCase } from './CreateLanguageUseCase';
-import { LanguageModel } from '../../domain/models/Language';
+import { LanguageModel } from '@domain/models/Language';
 
 interface ILanguageCreator {
   create(data: Partial<LanguageModel>): Promise<LanguageModel>;
@@ -5177,8 +5273,8 @@ describe('CreateLanguageUseCase', () => {
 Save as `backEnd/src/use-cases/language/CreateLanguageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { LanguageModel } from '../../domain/models/Language';
-import { CreateLanguageDto } from '../../infrastructure/dto/language/CreateLanguageDto';
+import { LanguageModel } from '@domain/models/Language';
+import { CreateLanguageDto } from '@infrastructure/dto/language/CreateLanguageDto';
 
 export interface ILanguageCreator {
   create(data: Partial<LanguageModel>): Promise<LanguageModel>;
@@ -5198,8 +5294,8 @@ Save as `backEnd/src/use-cases/language/CreateLanguageUseCase.ts`. Re-run — ex
 
 ```typescript
 import { UpdateLanguageUseCase } from './UpdateLanguageUseCase';
-import { LanguageModel } from '../../domain/models/Language';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { LanguageModel } from '@domain/models/Language';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ILanguageUpdater {
   update(id: string, data: Partial<LanguageModel>): Promise<LanguageModel | null>;
@@ -5228,9 +5324,9 @@ describe('UpdateLanguageUseCase', () => {
 Save as `backEnd/src/use-cases/language/UpdateLanguageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { LanguageModel } from '../../domain/models/Language';
-import { UpdateLanguageDto } from '../../infrastructure/dto/language/UpdateLanguageDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { LanguageModel } from '@domain/models/Language';
+import { UpdateLanguageDto } from '@infrastructure/dto/language/UpdateLanguageDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ILanguageUpdater {
   update(id: string, data: Partial<LanguageModel>): Promise<LanguageModel | null>;
@@ -5256,7 +5352,7 @@ Save as `backEnd/src/use-cases/language/UpdateLanguageUseCase.ts`. Re-run — ex
 
 ```typescript
 import { DeleteLanguageUseCase } from './DeleteLanguageUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface ILanguageDeleter {
   delete(id: string): Promise<boolean>;
@@ -5283,7 +5379,7 @@ describe('DeleteLanguageUseCase', () => {
 Save as `backEnd/src/use-cases/language/DeleteLanguageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface ILanguageDeleter {
   delete(id: string): Promise<boolean>;
@@ -5312,14 +5408,14 @@ Expected: `Tests: 7 passed, 7 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { LanguageEntity } from '../entities/LanguageEntity';
-import { LanguageRepository } from '../repositories/LanguageRepository';
-import { ListLanguageUseCase } from '../../use-cases/language/ListLanguageUseCase';
-import { GetLanguageUseCase } from '../../use-cases/language/GetLanguageUseCase';
-import { CreateLanguageUseCase } from '../../use-cases/language/CreateLanguageUseCase';
-import { UpdateLanguageUseCase } from '../../use-cases/language/UpdateLanguageUseCase';
-import { DeleteLanguageUseCase } from '../../use-cases/language/DeleteLanguageUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { LanguageEntity } from '@infrastructure/entities/LanguageEntity';
+import { LanguageRepository } from '@infrastructure/repositories/LanguageRepository';
+import { ListLanguageUseCase } from '@use-cases/language/ListLanguageUseCase';
+import { GetLanguageUseCase } from '@use-cases/language/GetLanguageUseCase';
+import { CreateLanguageUseCase } from '@use-cases/language/CreateLanguageUseCase';
+import { UpdateLanguageUseCase } from '@use-cases/language/UpdateLanguageUseCase';
+import { DeleteLanguageUseCase } from '@use-cases/language/DeleteLanguageUseCase';
 
 const repository = new LanguageRepository(AppDataSource.getRepository(LanguageEntity));
 const listUseCase = new ListLanguageUseCase(repository);
@@ -5377,11 +5473,11 @@ Save as `backEnd/src/infrastructure/controllers/LanguageController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { LanguageController } from '../controllers/LanguageController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateLanguageDto } from '../dto/language/CreateLanguageDto';
-import { UpdateLanguageDto } from '../dto/language/UpdateLanguageDto';
+import { LanguageController } from '@infrastructure/controllers/LanguageController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateLanguageDto } from '@infrastructure/dto/language/CreateLanguageDto';
+import { UpdateLanguageDto } from '@infrastructure/dto/language/UpdateLanguageDto';
 
 const router = Router();
 
@@ -5434,9 +5530,9 @@ git commit -m "Add Language resource (repository, use-cases, controller, route)"
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { NewsModel } from '../../domain/models/News';
-import { NewsEntity } from '../entities/NewsEntity';
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
+import { NewsEntity } from '@infrastructure/entities/NewsEntity';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
 
 export class NewsRepository extends BaseRepository<NewsModel, NewsEntity> implements INewsRepository {
   constructor(repository: Repository<NewsEntity>) {
@@ -5558,8 +5654,8 @@ Save as `backEnd/src/infrastructure/dto/news/UpdateNewsDto.ts`.
 
 ```typescript
 import { ListNewsUseCase } from './ListNewsUseCase';
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
-import { NewsModel } from '../../domain/models/News';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
 
 describe('ListNewsUseCase', () => {
   it('returns every news entry ordered by the repository', async () => {
@@ -5581,8 +5677,8 @@ describe('ListNewsUseCase', () => {
 Save as `backEnd/src/use-cases/news/ListNewsUseCase.test.ts`. Run: `cd backEnd && npx jest ListNewsUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
-import { NewsModel } from '../../domain/models/News';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
 
 export class ListNewsUseCase {
   constructor(private readonly repository: INewsRepository) {}
@@ -5598,8 +5694,8 @@ Save as `backEnd/src/use-cases/news/ListNewsUseCase.ts`. Re-run — expect PASS.
 
 ```typescript
 import { ListNewsByCategoryUseCase } from './ListNewsByCategoryUseCase';
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
-import { NewsModel } from '../../domain/models/News';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
 
 describe('ListNewsByCategoryUseCase', () => {
   it('returns news filtered by category', async () => {
@@ -5621,8 +5717,8 @@ describe('ListNewsByCategoryUseCase', () => {
 Save as `backEnd/src/use-cases/news/ListNewsByCategoryUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
-import { NewsModel } from '../../domain/models/News';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
 
 export class ListNewsByCategoryUseCase {
   constructor(private readonly repository: INewsRepository) {}
@@ -5638,8 +5734,8 @@ Save as `backEnd/src/use-cases/news/ListNewsByCategoryUseCase.ts`. Re-run — ex
 
 ```typescript
 import { ListRecentNewsUseCase } from './ListRecentNewsUseCase';
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
-import { NewsModel } from '../../domain/models/News';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
 
 describe('ListRecentNewsUseCase', () => {
   it('returns the most recent news up to the given limit', async () => {
@@ -5661,8 +5757,8 @@ describe('ListRecentNewsUseCase', () => {
 Save as `backEnd/src/use-cases/news/ListRecentNewsUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { INewsRepository } from '../../domain/interfaces/INewsRepository';
-import { NewsModel } from '../../domain/models/News';
+import { INewsRepository } from '@domain/interfaces/INewsRepository';
+import { NewsModel } from '@domain/models/News';
 
 export class ListRecentNewsUseCase {
   constructor(private readonly repository: INewsRepository) {}
@@ -5678,8 +5774,8 @@ Save as `backEnd/src/use-cases/news/ListRecentNewsUseCase.ts`. Re-run — expect
 
 ```typescript
 import { GetNewsUseCase } from './GetNewsUseCase';
-import { NewsModel } from '../../domain/models/News';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NewsModel } from '@domain/models/News';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface INewsFinder {
   findById(id: string): Promise<NewsModel | null>;
@@ -5707,8 +5803,8 @@ describe('GetNewsUseCase', () => {
 Save as `backEnd/src/use-cases/news/GetNewsUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NewsModel } from '../../domain/models/News';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NewsModel } from '@domain/models/News';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface INewsFinder {
   findById(id: string): Promise<NewsModel | null>;
@@ -5734,7 +5830,7 @@ Save as `backEnd/src/use-cases/news/GetNewsUseCase.ts`. Re-run — expect PASS.
 
 ```typescript
 import { CreateNewsUseCase } from './CreateNewsUseCase';
-import { NewsModel } from '../../domain/models/News';
+import { NewsModel } from '@domain/models/News';
 
 interface INewsCreator {
   create(data: Partial<NewsModel>): Promise<NewsModel>;
@@ -5757,8 +5853,8 @@ describe('CreateNewsUseCase', () => {
 Save as `backEnd/src/use-cases/news/CreateNewsUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NewsModel } from '../../domain/models/News';
-import { CreateNewsDto } from '../../infrastructure/dto/news/CreateNewsDto';
+import { NewsModel } from '@domain/models/News';
+import { CreateNewsDto } from '@infrastructure/dto/news/CreateNewsDto';
 
 export interface INewsCreator {
   create(data: Partial<NewsModel>): Promise<NewsModel>;
@@ -5778,8 +5874,8 @@ Save as `backEnd/src/use-cases/news/CreateNewsUseCase.ts`. Re-run — expect PAS
 
 ```typescript
 import { UpdateNewsUseCase } from './UpdateNewsUseCase';
-import { NewsModel } from '../../domain/models/News';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NewsModel } from '@domain/models/News';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface INewsUpdater {
   update(id: string, data: Partial<NewsModel>): Promise<NewsModel | null>;
@@ -5808,9 +5904,9 @@ describe('UpdateNewsUseCase', () => {
 Save as `backEnd/src/use-cases/news/UpdateNewsUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NewsModel } from '../../domain/models/News';
-import { UpdateNewsDto } from '../../infrastructure/dto/news/UpdateNewsDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NewsModel } from '@domain/models/News';
+import { UpdateNewsDto } from '@infrastructure/dto/news/UpdateNewsDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface INewsUpdater {
   update(id: string, data: Partial<NewsModel>): Promise<NewsModel | null>;
@@ -5836,7 +5932,7 @@ Save as `backEnd/src/use-cases/news/UpdateNewsUseCase.ts`. Re-run — expect PAS
 
 ```typescript
 import { DeleteNewsUseCase } from './DeleteNewsUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface INewsDeleter {
   delete(id: string): Promise<boolean>;
@@ -5863,7 +5959,7 @@ describe('DeleteNewsUseCase', () => {
 Save as `backEnd/src/use-cases/news/DeleteNewsUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface INewsDeleter {
   delete(id: string): Promise<boolean>;
@@ -5892,16 +5988,16 @@ Expected: `Tests: 10 passed, 10 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { NewsEntity } from '../entities/NewsEntity';
-import { NewsRepository } from '../repositories/NewsRepository';
-import { ListNewsUseCase } from '../../use-cases/news/ListNewsUseCase';
-import { ListNewsByCategoryUseCase } from '../../use-cases/news/ListNewsByCategoryUseCase';
-import { ListRecentNewsUseCase } from '../../use-cases/news/ListRecentNewsUseCase';
-import { GetNewsUseCase } from '../../use-cases/news/GetNewsUseCase';
-import { CreateNewsUseCase } from '../../use-cases/news/CreateNewsUseCase';
-import { UpdateNewsUseCase } from '../../use-cases/news/UpdateNewsUseCase';
-import { DeleteNewsUseCase } from '../../use-cases/news/DeleteNewsUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { NewsEntity } from '@infrastructure/entities/NewsEntity';
+import { NewsRepository } from '@infrastructure/repositories/NewsRepository';
+import { ListNewsUseCase } from '@use-cases/news/ListNewsUseCase';
+import { ListNewsByCategoryUseCase } from '@use-cases/news/ListNewsByCategoryUseCase';
+import { ListRecentNewsUseCase } from '@use-cases/news/ListRecentNewsUseCase';
+import { GetNewsUseCase } from '@use-cases/news/GetNewsUseCase';
+import { CreateNewsUseCase } from '@use-cases/news/CreateNewsUseCase';
+import { UpdateNewsUseCase } from '@use-cases/news/UpdateNewsUseCase';
+import { DeleteNewsUseCase } from '@use-cases/news/DeleteNewsUseCase';
 
 const repository = new NewsRepository(AppDataSource.getRepository(NewsEntity));
 const listUseCase = new ListNewsUseCase(repository);
@@ -5974,11 +6070,11 @@ Save as `backEnd/src/infrastructure/controllers/NewsController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { NewsController } from '../controllers/NewsController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateNewsDto } from '../dto/news/CreateNewsDto';
-import { UpdateNewsDto } from '../dto/news/UpdateNewsDto';
+import { NewsController } from '@infrastructure/controllers/NewsController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateNewsDto } from '@infrastructure/dto/news/CreateNewsDto';
+import { UpdateNewsDto } from '@infrastructure/dto/news/UpdateNewsDto';
 
 const router = Router();
 
@@ -6078,8 +6174,8 @@ Save as `backEnd/src/infrastructure/dto/user/UpdateUserProfileDto.ts`.
 
 ```typescript
 import { GetUserProfileUseCase } from './GetUserProfileUseCase';
-import { UserModel } from '../../domain/models/User';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { UserModel } from '@domain/models/User';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IUserLister {
   findAll(): Promise<UserModel[]>;
@@ -6107,8 +6203,8 @@ describe('GetUserProfileUseCase', () => {
 Save as `backEnd/src/use-cases/user/GetUserProfileUseCase.test.ts`. Run: `cd backEnd && npx jest GetUserProfileUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { UserModel } from '../../domain/models/User';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { UserModel } from '@domain/models/User';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IUserLister {
   findAll(): Promise<UserModel[]>;
@@ -6134,8 +6230,8 @@ Save as `backEnd/src/use-cases/user/GetUserProfileUseCase.ts`. Re-run — expect
 
 ```typescript
 import { UpdateUserProfileUseCase } from './UpdateUserProfileUseCase';
-import { UserModel } from '../../domain/models/User';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { UserModel } from '@domain/models/User';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IUserUpdater {
   update(id: string, data: Partial<UserModel>): Promise<UserModel | null>;
@@ -6164,9 +6260,9 @@ describe('UpdateUserProfileUseCase', () => {
 Save as `backEnd/src/use-cases/user/UpdateUserProfileUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { UserModel } from '../../domain/models/User';
-import { UpdateUserProfileDto } from '../../infrastructure/dto/user/UpdateUserProfileDto';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { UserModel } from '@domain/models/User';
+import { UpdateUserProfileDto } from '@infrastructure/dto/user/UpdateUserProfileDto';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IUserUpdater {
   update(id: string, data: Partial<UserModel>): Promise<UserModel | null>;
@@ -6194,8 +6290,8 @@ Per the design spec, a previous photo file is deleted from disk after the new on
 
 ```typescript
 import { UploadUserPhotoUseCase } from './UploadUserPhotoUseCase';
-import { UserModel } from '../../domain/models/User';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { UserModel } from '@domain/models/User';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 import * as fs from 'fs';
 
 jest.mock('fs');
@@ -6264,8 +6360,8 @@ Save as `backEnd/src/use-cases/user/UploadUserPhotoUseCase.test.ts`. Run it — 
 ```typescript
 import * as fs from 'fs';
 import * as path from 'path';
-import { UserModel } from '../../domain/models/User';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { UserModel } from '@domain/models/User';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IUserPhotoStore {
   findById(id: string): Promise<UserModel | null>;
@@ -6320,7 +6416,7 @@ Expected: `Tests: 7 passed, 7 total`.
 import multer from 'multer';
 import path from 'path';
 import { Request } from 'express';
-import { envConfig } from '../../config/env.config';
+import { envConfig } from '@config/env.config';
 
 const storage = multer.diskStorage({
   destination: (req, file, callback) => {
@@ -6356,13 +6452,13 @@ Save as `backEnd/src/infrastructure/middlewares/upload.middleware.ts`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { UserEntity } from '../entities/UserEntity';
-import { UserRepository } from '../repositories/UserRepository';
-import { GetUserProfileUseCase } from '../../use-cases/user/GetUserProfileUseCase';
-import { UpdateUserProfileUseCase } from '../../use-cases/user/UpdateUserProfileUseCase';
-import { UploadUserPhotoUseCase } from '../../use-cases/user/UploadUserPhotoUseCase';
-import { envConfig } from '../../config/env.config';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { UserEntity } from '@infrastructure/entities/UserEntity';
+import { UserRepository } from '@infrastructure/repositories/UserRepository';
+import { GetUserProfileUseCase } from '@use-cases/user/GetUserProfileUseCase';
+import { UpdateUserProfileUseCase } from '@use-cases/user/UpdateUserProfileUseCase';
+import { UploadUserPhotoUseCase } from '@use-cases/user/UploadUserPhotoUseCase';
+import { envConfig } from '@config/env.config';
 
 const repository = new UserRepository(AppDataSource.getRepository(UserEntity));
 const getProfileUseCase = new GetUserProfileUseCase(repository);
@@ -6403,11 +6499,11 @@ Save as `backEnd/src/infrastructure/controllers/UserController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { UserController } from '../controllers/UserController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { uploadUserPhoto } from '../middlewares/upload.middleware';
-import { UpdateUserProfileDto } from '../dto/user/UpdateUserProfileDto';
+import { UserController } from '@infrastructure/controllers/UserController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { uploadUserPhoto } from '@infrastructure/middlewares/upload.middleware';
+import { UpdateUserProfileDto } from '@infrastructure/dto/user/UpdateUserProfileDto';
 
 const router = Router();
 
@@ -6459,9 +6555,9 @@ Inverted direction from every other resource: `POST /contact-messages` is **publ
 ```typescript
 import { Repository } from 'typeorm';
 import { BaseRepository } from './BaseRepository';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
-import { ContactMessageEntity } from '../entities/ContactMessageEntity';
-import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
+import { ContactMessageEntity } from '@infrastructure/entities/ContactMessageEntity';
+import { IContactMessageRepository } from '@domain/interfaces/IContactMessageRepository';
 
 export class ContactMessageRepository
   extends BaseRepository<ContactMessageModel, ContactMessageEntity>
@@ -6525,7 +6621,7 @@ Save as `backEnd/src/infrastructure/dto/contact-message/CreateContactMessageDto.
 
 ```typescript
 import { CreateContactMessageUseCase } from './CreateContactMessageUseCase';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
 
 interface IContactMessageCreator {
   create(data: Partial<ContactMessageModel>): Promise<ContactMessageModel>;
@@ -6548,8 +6644,8 @@ describe('CreateContactMessageUseCase', () => {
 Save as `backEnd/src/use-cases/contact-message/CreateContactMessageUseCase.test.ts`. Run: `cd backEnd && npx jest CreateContactMessageUseCase.test.ts` — expect FAIL.
 
 ```typescript
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
-import { CreateContactMessageDto } from '../../infrastructure/dto/contact-message/CreateContactMessageDto';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
+import { CreateContactMessageDto } from '@infrastructure/dto/contact-message/CreateContactMessageDto';
 
 export interface IContactMessageCreator {
   create(data: Partial<ContactMessageModel>): Promise<ContactMessageModel>;
@@ -6569,7 +6665,7 @@ Save as `backEnd/src/use-cases/contact-message/CreateContactMessageUseCase.ts`. 
 
 ```typescript
 import { ListContactMessageUseCase } from './ListContactMessageUseCase';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
 
 interface IContactMessageLister {
   findAll(): Promise<ContactMessageModel[]>;
@@ -6591,7 +6687,7 @@ describe('ListContactMessageUseCase', () => {
 Save as `backEnd/src/use-cases/contact-message/ListContactMessageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
 
 export interface IContactMessageLister {
   findAll(): Promise<ContactMessageModel[]>;
@@ -6611,8 +6707,8 @@ Save as `backEnd/src/use-cases/contact-message/ListContactMessageUseCase.ts`. Re
 
 ```typescript
 import { ListUnreadContactMessageUseCase } from './ListUnreadContactMessageUseCase';
-import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { IContactMessageRepository } from '@domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
 
 describe('ListUnreadContactMessageUseCase', () => {
   it('returns only unread messages', async () => {
@@ -6633,8 +6729,8 @@ describe('ListUnreadContactMessageUseCase', () => {
 Save as `backEnd/src/use-cases/contact-message/ListUnreadContactMessageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { IContactMessageRepository } from '@domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
 
 export class ListUnreadContactMessageUseCase {
   constructor(private readonly repository: IContactMessageRepository) {}
@@ -6650,9 +6746,9 @@ Save as `backEnd/src/use-cases/contact-message/ListUnreadContactMessageUseCase.t
 
 ```typescript
 import { MarkContactMessageAsReadUseCase } from './MarkContactMessageAsReadUseCase';
-import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { IContactMessageRepository } from '@domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 describe('MarkContactMessageAsReadUseCase', () => {
   it('marks the message as read and returns it', async () => {
@@ -6683,9 +6779,9 @@ describe('MarkContactMessageAsReadUseCase', () => {
 Save as `backEnd/src/use-cases/contact-message/MarkContactMessageAsReadUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
-import { ContactMessageModel } from '../../domain/models/ContactMessage';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { IContactMessageRepository } from '@domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export class MarkContactMessageAsReadUseCase {
   constructor(private readonly repository: IContactMessageRepository) {}
@@ -6707,7 +6803,7 @@ Save as `backEnd/src/use-cases/contact-message/MarkContactMessageAsReadUseCase.t
 
 ```typescript
 import { DeleteContactMessageUseCase } from './DeleteContactMessageUseCase';
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 interface IContactMessageDeleter {
   delete(id: string): Promise<boolean>;
@@ -6734,7 +6830,7 @@ describe('DeleteContactMessageUseCase', () => {
 Save as `backEnd/src/use-cases/contact-message/DeleteContactMessageUseCase.test.ts`. Run it — expect FAIL.
 
 ```typescript
-import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import { NotFoundException } from '@shared/exceptions/NotFoundException';
 
 export interface IContactMessageDeleter {
   delete(id: string): Promise<boolean>;
@@ -6763,14 +6859,14 @@ Expected: `Tests: 8 passed, 8 total`.
 
 ```typescript
 import { Request, Response, NextFunction } from 'express';
-import { AppDataSource } from '../database/config/data-source';
-import { ContactMessageEntity } from '../entities/ContactMessageEntity';
-import { ContactMessageRepository } from '../repositories/ContactMessageRepository';
-import { CreateContactMessageUseCase } from '../../use-cases/contact-message/CreateContactMessageUseCase';
-import { ListContactMessageUseCase } from '../../use-cases/contact-message/ListContactMessageUseCase';
-import { ListUnreadContactMessageUseCase } from '../../use-cases/contact-message/ListUnreadContactMessageUseCase';
-import { MarkContactMessageAsReadUseCase } from '../../use-cases/contact-message/MarkContactMessageAsReadUseCase';
-import { DeleteContactMessageUseCase } from '../../use-cases/contact-message/DeleteContactMessageUseCase';
+import { AppDataSource } from '@infrastructure/database/config/data-source';
+import { ContactMessageEntity } from '@infrastructure/entities/ContactMessageEntity';
+import { ContactMessageRepository } from '@infrastructure/repositories/ContactMessageRepository';
+import { CreateContactMessageUseCase } from '@use-cases/contact-message/CreateContactMessageUseCase';
+import { ListContactMessageUseCase } from '@use-cases/contact-message/ListContactMessageUseCase';
+import { ListUnreadContactMessageUseCase } from '@use-cases/contact-message/ListUnreadContactMessageUseCase';
+import { MarkContactMessageAsReadUseCase } from '@use-cases/contact-message/MarkContactMessageAsReadUseCase';
+import { DeleteContactMessageUseCase } from '@use-cases/contact-message/DeleteContactMessageUseCase';
 
 const repository = new ContactMessageRepository(AppDataSource.getRepository(ContactMessageEntity));
 const createUseCase = new CreateContactMessageUseCase(repository);
@@ -6821,10 +6917,10 @@ Save as `backEnd/src/infrastructure/controllers/ContactMessageController.ts`.
 
 ```typescript
 import { Router } from 'express';
-import { ContactMessageController } from '../controllers/ContactMessageController';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { validate } from '../middlewares/validate.middleware';
-import { CreateContactMessageDto } from '../dto/contact-message/CreateContactMessageDto';
+import { ContactMessageController } from '@infrastructure/controllers/ContactMessageController';
+import { authMiddleware } from '@infrastructure/middlewares/auth.middleware';
+import { validate } from '@infrastructure/middlewares/validate.middleware';
+import { CreateContactMessageDto } from '@infrastructure/dto/contact-message/CreateContactMessageDto';
 
 const router = Router();
 
@@ -6908,7 +7004,7 @@ app.use(envConfig.apiPrefix, apiRoutes);
 And add the import near the top, alongside the other imports (after the `errorMiddleware` import added in Task 4):
 
 ```typescript
-import apiRoutes from './infrastructure/routes';
+import apiRoutes from '@infrastructure/routes';
 ```
 
 - [ ] **Step 3: Verify the backend still builds**
