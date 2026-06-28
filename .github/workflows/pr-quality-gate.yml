@@ -90,9 +90,8 @@ jobs:
         working-directory: frontEnd
       - run: npm run build
         working-directory: frontEnd
-      - run: npm run start &
-        working-directory: frontEnd
-      - run: npx wait-on http://localhost:3000
-        working-directory: frontEnd
-      - run: npm run cypress:run
+      - run: |
+          npm run start &
+          npx wait-on http://localhost:3000
+          npm run cypress:run
         working-directory: frontEnd
