@@ -6408,3 +6408,421 @@ Expected: no errors.
 git add backEnd/src/infrastructure/dto/user/ backEnd/src/use-cases/user/ backEnd/src/infrastructure/middlewares/upload.middleware.ts backEnd/src/infrastructure/controllers/UserController.ts backEnd/src/infrastructure/routes/user.routes.ts
 git commit -m "Add User profile and photo upload (use-cases, controller, route)"
 ```
+
+---
+
+### Task 20: ContactMessage resource
+
+Inverted direction from every other resource: `POST /contact-messages` is **public** (anyone can submit the contact form, no auth), and `GET`/mark-as-read/`DELETE` are **admin-protected** (no public read, no admin create, no `GET /:id` detail — the spec only calls for list + mark-read + delete on the admin side).
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/ContactMessageRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/contact-message/CreateContactMessageDto.ts`
+- Create: `backEnd/src/use-cases/contact-message/CreateContactMessageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/contact-message/ListContactMessageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/contact-message/ListUnreadContactMessageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/contact-message/MarkContactMessageAsReadUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/contact-message/DeleteContactMessageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/ContactMessageController.ts`
+- Create: `backEnd/src/infrastructure/routes/contact-message.routes.ts`
+
+**Interfaces:**
+- Consumes: `BaseRepository` (Task 6, for inherited `findAll`/`update`/`delete`/`create`), `NotFoundException` (Task 3).
+- Produces: mounted route prefix `/contact-messages` (Task 21).
+
+- [ ] **Step 1: Implement `ContactMessageRepository`**
+
+`markAsRead` reuses the inherited `update()` from `BaseRepository` rather than reimplementing the update-then-refetch logic.
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { ContactMessageEntity } from '../entities/ContactMessageEntity';
+import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
+
+export class ContactMessageRepository
+  extends BaseRepository<ContactMessageModel, ContactMessageEntity>
+  implements IContactMessageRepository
+{
+  constructor(repository: Repository<ContactMessageEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: ContactMessageEntity): ContactMessageModel {
+    const model = new ContactMessageModel();
+    model.id = entity.id;
+    model.name = entity.name;
+    model.email = entity.email;
+    model.subject = entity.subject;
+    model.message = entity.message;
+    model.read = entity.read;
+    model.createdAt = entity.createdAt;
+    return model;
+  }
+
+  async findUnread(): Promise<ContactMessageModel[]> {
+    const entities = await this.repository.find({ where: { read: false }, order: { createdAt: 'DESC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async markAsRead(id: string): Promise<ContactMessageModel | null> {
+    return this.update(id, { read: true });
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/ContactMessageRepository.ts`.
+
+- [ ] **Step 2: Create the DTO**
+
+Only the public submission needs a DTO — there's no admin create, and `markAsRead`/`delete` take just an `id` param, no body.
+
+```typescript
+import { IsString, IsNotEmpty, IsEmail } from 'class-validator';
+
+export class CreateContactMessageDto {
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  subject!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  message!: string;
+}
+```
+Save as `backEnd/src/infrastructure/dto/contact-message/CreateContactMessageDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `CreateContactMessageUseCase`, then implement it**
+
+```typescript
+import { CreateContactMessageUseCase } from './CreateContactMessageUseCase';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+
+interface IContactMessageCreator {
+  create(data: Partial<ContactMessageModel>): Promise<ContactMessageModel>;
+}
+
+describe('CreateContactMessageUseCase', () => {
+  it('creates and returns the new message', async () => {
+    const created = new ContactMessageModel();
+    const repository: IContactMessageCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateContactMessageUseCase(repository);
+    const input = { name: 'Jane', email: 'jane@example.com', subject: 'Hello', message: 'Hi there' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/contact-message/CreateContactMessageUseCase.test.ts`. Run: `cd backEnd && npx jest CreateContactMessageUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { CreateContactMessageDto } from '../../infrastructure/dto/contact-message/CreateContactMessageDto';
+
+export interface IContactMessageCreator {
+  create(data: Partial<ContactMessageModel>): Promise<ContactMessageModel>;
+}
+
+export class CreateContactMessageUseCase {
+  constructor(private readonly repository: IContactMessageCreator) {}
+
+  async execute(data: CreateContactMessageDto): Promise<ContactMessageModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/contact-message/CreateContactMessageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `ListContactMessageUseCase`, then implement it**
+
+```typescript
+import { ListContactMessageUseCase } from './ListContactMessageUseCase';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+
+interface IContactMessageLister {
+  findAll(): Promise<ContactMessageModel[]>;
+}
+
+describe('ListContactMessageUseCase', () => {
+  it('returns every message', async () => {
+    const entries = [new ContactMessageModel(), new ContactMessageModel()];
+    const repository: IContactMessageLister = { findAll: jest.fn().mockResolvedValue(entries) };
+    const sut = new ListContactMessageUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findAll).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/contact-message/ListContactMessageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+
+export interface IContactMessageLister {
+  findAll(): Promise<ContactMessageModel[]>;
+}
+
+export class ListContactMessageUseCase {
+  constructor(private readonly repository: IContactMessageLister) {}
+
+  async execute(): Promise<ContactMessageModel[]> {
+    return this.repository.findAll();
+  }
+}
+```
+Save as `backEnd/src/use-cases/contact-message/ListContactMessageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `ListUnreadContactMessageUseCase`, then implement it**
+
+```typescript
+import { ListUnreadContactMessageUseCase } from './ListUnreadContactMessageUseCase';
+import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+
+describe('ListUnreadContactMessageUseCase', () => {
+  it('returns only unread messages', async () => {
+    const entries = [new ContactMessageModel()];
+    const repository: IContactMessageRepository = {
+      findUnread: jest.fn().mockResolvedValue(entries),
+      markAsRead: jest.fn(),
+    };
+    const sut = new ListUnreadContactMessageUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findUnread).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/contact-message/ListUnreadContactMessageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+
+export class ListUnreadContactMessageUseCase {
+  constructor(private readonly repository: IContactMessageRepository) {}
+
+  async execute(): Promise<ContactMessageModel[]> {
+    return this.repository.findUnread();
+  }
+}
+```
+Save as `backEnd/src/use-cases/contact-message/ListUnreadContactMessageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `MarkContactMessageAsReadUseCase`, then implement it**
+
+```typescript
+import { MarkContactMessageAsReadUseCase } from './MarkContactMessageAsReadUseCase';
+import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+describe('MarkContactMessageAsReadUseCase', () => {
+  it('marks the message as read and returns it', async () => {
+    const updated = new ContactMessageModel();
+    const repository: IContactMessageRepository = {
+      findUnread: jest.fn(),
+      markAsRead: jest.fn().mockResolvedValue(updated),
+    };
+    const sut = new MarkContactMessageAsReadUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(repository.markAsRead).toHaveBeenCalledWith('1');
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the message does not exist', async () => {
+    const repository: IContactMessageRepository = {
+      findUnread: jest.fn(),
+      markAsRead: jest.fn().mockResolvedValue(null),
+    };
+    const sut = new MarkContactMessageAsReadUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/contact-message/MarkContactMessageAsReadUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { IContactMessageRepository } from '../../domain/interfaces/IContactMessageRepository';
+import { ContactMessageModel } from '../../domain/models/ContactMessage';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export class MarkContactMessageAsReadUseCase {
+  constructor(private readonly repository: IContactMessageRepository) {}
+
+  async execute(id: string): Promise<ContactMessageModel> {
+    const updated = await this.repository.markAsRead(id);
+
+    if (!updated) {
+      throw new NotFoundException('Contact message not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/contact-message/MarkContactMessageAsReadUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `DeleteContactMessageUseCase`, then implement it**
+
+```typescript
+import { DeleteContactMessageUseCase } from './DeleteContactMessageUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IContactMessageDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteContactMessageUseCase', () => {
+  it('deletes when the message exists', async () => {
+    const repository: IContactMessageDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteContactMessageUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the message does not exist', async () => {
+    const repository: IContactMessageDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteContactMessageUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/contact-message/DeleteContactMessageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IContactMessageDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteContactMessageUseCase {
+  constructor(private readonly repository: IContactMessageDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Contact message not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/contact-message/DeleteContactMessageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Run the full ContactMessage test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/contact-message`
+Expected: `Tests: 8 passed, 8 total`.
+
+- [ ] **Step 9: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { ContactMessageEntity } from '../entities/ContactMessageEntity';
+import { ContactMessageRepository } from '../repositories/ContactMessageRepository';
+import { CreateContactMessageUseCase } from '../../use-cases/contact-message/CreateContactMessageUseCase';
+import { ListContactMessageUseCase } from '../../use-cases/contact-message/ListContactMessageUseCase';
+import { ListUnreadContactMessageUseCase } from '../../use-cases/contact-message/ListUnreadContactMessageUseCase';
+import { MarkContactMessageAsReadUseCase } from '../../use-cases/contact-message/MarkContactMessageAsReadUseCase';
+import { DeleteContactMessageUseCase } from '../../use-cases/contact-message/DeleteContactMessageUseCase';
+
+const repository = new ContactMessageRepository(AppDataSource.getRepository(ContactMessageEntity));
+const createUseCase = new CreateContactMessageUseCase(repository);
+const listUseCase = new ListContactMessageUseCase(repository);
+const unreadUseCase = new ListUnreadContactMessageUseCase(repository);
+const markAsReadUseCase = new MarkContactMessageAsReadUseCase(repository);
+const deleteUseCase = new DeleteContactMessageUseCase(repository);
+
+export class ContactMessageController {
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = req.query.unread === 'true' ? await unreadUseCase.execute() : await listUseCase.execute();
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async markAsRead(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await markAsReadUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/ContactMessageController.ts`.
+
+- [ ] **Step 10: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { ContactMessageController } from '../controllers/ContactMessageController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateContactMessageDto } from '../dto/contact-message/CreateContactMessageDto';
+
+const router = Router();
+
+router.post('/', validate(CreateContactMessageDto), ContactMessageController.create);
+router.get('/', authMiddleware, ContactMessageController.list);
+router.patch('/:id/read', authMiddleware, ContactMessageController.markAsRead);
+router.delete('/:id', authMiddleware, ContactMessageController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/contact-message.routes.ts`.
+
+- [ ] **Step 11: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/ContactMessageRepository.ts backEnd/src/infrastructure/dto/contact-message/ backEnd/src/use-cases/contact-message/ backEnd/src/infrastructure/controllers/ContactMessageController.ts backEnd/src/infrastructure/routes/contact-message.routes.ts
+git commit -m "Add ContactMessage resource (repository, use-cases, controller, route)"
+```
