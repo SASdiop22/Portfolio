@@ -20,7 +20,7 @@ This spec defines the full API slice for all 11 resources in one pass, since the
 ## Non-goals
 
 - No frontend work.
-- No file uploads (User photo, project images, CV) — `multer` is a dependency but wiring it up is a separate follow-up.
+- No file uploads for Project images/screenshots or a CV file — `multer` is a dependency but wiring those up is a separate follow-up. (User photo upload *is* in scope — see Components §5.)
 - No DB migrations — `synchronize: true` (dev-only) continues to handle schema for now.
 - No integration/DB-backed tests for repositories or controllers — only use-cases get unit tests (mocked repositories), since standing up a test database is out of scope for this pass.
 - No public user registration — the single admin account is created via a one-time seed script, not an API endpoint.
@@ -80,13 +80,17 @@ use-cases/<resource>/Delete<Resource>UseCase.ts
 | Interest | 🔓 `GET /interests`, `GET /interests/:id` | 🔒 `POST /interests`, `PUT /interests/:id`, `DELETE /interests/:id` |
 | Language | 🔓 `GET /languages`, `GET /languages/:id` | 🔒 `POST /languages`, `PUT /languages/:id`, `DELETE /languages/:id` |
 | News | 🔓 `GET /news`, `GET /news?category=x`, `GET /news/recent?limit=n`, `GET /news/:id` | 🔒 `POST /news`, `PUT /news/:id`, `DELETE /news/:id` |
-| User | 🔓 `GET /users/profile` | 🔒 `PUT /users/profile` |
+| User | 🔓 `GET /users/profile` | 🔒 `PUT /users/profile`, 🔒 `POST /users/photo` |
 | ContactMessage | 🔓 `POST /contact-messages` | 🔒 `GET /contact-messages`, `PATCH /contact-messages/:id/read`, `DELETE /contact-messages/:id` |
 | Auth | 🔓 `POST /auth/login` | — |
 
 All `*.routes.ts` files are mounted in a new aggregator, `backEnd/src/infrastructure/routes/index.ts`, which `server.ts` imports and mounts once at `envConfig.apiPrefix` (replacing the commented-out `// TODO: Ajouter les routes API ici` placeholder already in `server.ts`).
 
-### 5. Testing
+### 5. User photo upload
+
+`POST /api/v1/users/photo` (admin-protected): a dedicated endpoint, separate from `PUT /users/profile` (which stays plain JSON). Uses a `multer` middleware (`backEnd/src/infrastructure/middlewares/upload.middleware.ts`) configured with `diskStorage` writing into `envConfig.upload.uploadPath`, a generated filename (e.g. `${userId}-${Date.now()}.${ext}`) to avoid collisions, a file-size limit from `envConfig.upload.maxFileSize`, and a file-type filter accepting only `image/jpeg`, `image/png`, `image/webp`. The route chains `authMiddleware` → `upload.single('photo')` → controller. A new `UploadUserPhotoUseCase` takes the generated filename, calls `IUserRepository.update` (via `UserRepository`, extending `BaseRepository`) to set `UserModel.photo` to the public path (`/uploads/<filename>`, matching the static file serving already in `server.ts`), and returns the updated user. If a previous photo file exists, it's deleted from disk after the new one is saved successfully (avoids accumulating orphaned files) — best-effort, a failure to delete the old file doesn't fail the request.
+
+### 6. Testing
 
 Jest + `ts-jest` added to `backEnd/package.json` (`npm test` script added — this is also what closes the gap noted in the CI quality-gate follow-ups, since the CI typecheck job doesn't run any tests today). Each use-case gets a unit test constructed with a mocked repository (jest mock implementing the relevant `I<Resource>Repository` interface) — e.g. `CreateEducationUseCase.test.ts` asserts the use-case calls `repository.create` with the right shape and returns its result; `DeleteEducationUseCase.test.ts` asserts it throws `NotFoundException` when the repository returns null. `LoginUseCase` gets the same treatment with a mocked `IUserRepository` and mocked `bcryptjs.compare`. No DB-backed or HTTP-level tests in this pass.
 
@@ -94,12 +98,12 @@ Jest + `ts-jest` added to `backEnd/package.json` (`npm test` script added — th
 
 1. Shared infrastructure first: `BaseRepository`, exceptions, the three middlewares, Jest setup — nothing resource-specific depends on anything resource-specific yet.
 2. Auth (login use-case/controller/route + auth middleware wiring) + the admin seed script — needed before any admin route can be meaningfully tested end-to-end.
-3. The 11 resources, each as its own self-contained batch (repository → use-cases → DTOs → controller → route → tests), in the order listed in the route table above (simplest shape first: Education, Experience, ... down to ContactMessage last, since it's the most structurally different).
+3. The 11 resources, each as its own self-contained batch (repository → use-cases → DTOs → controller → route → tests), in the order listed in the route table above (simplest shape first: Education, Experience, ... down to ContactMessage last, since it's the most structurally different). The User batch additionally includes the photo upload endpoint (upload middleware, `UploadUserPhotoUseCase`, route).
 4. Routes aggregator + `server.ts` wiring, once at least one resource's routes exist (could happen incrementally — each resource's routes file gets added to the aggregator as it's built, rather than all at the end).
 
 ## Open items deferred to follow-up work
 
-- File uploads (User photo, Project images/screenshots, CV).
+- File uploads for Project images/screenshots and a CV file (User photo upload is now in scope — see Components §5).
 - DB migrations (currently relying on `synchronize: true`).
 - DB-backed/integration tests, and wiring `npm test` into the CI quality-gate workflow's job list.
 - Frontend integration (this spec is backend-only).
