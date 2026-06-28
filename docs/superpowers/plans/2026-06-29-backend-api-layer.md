@@ -6826,3 +6826,99 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/ContactMessageRepository.ts backEnd/src/infrastructure/dto/contact-message/ backEnd/src/use-cases/contact-message/ backEnd/src/infrastructure/controllers/ContactMessageController.ts backEnd/src/infrastructure/routes/contact-message.routes.ts
 git commit -m "Add ContactMessage resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 21: Routes aggregator and server wiring
+
+**Files:**
+- Create: `backEnd/src/infrastructure/routes/index.ts`
+- Modify: `backEnd/src/server.ts:56-59`
+
+**Interfaces:**
+- Consumes: every `*.routes.ts` file from Tasks 8 and 10-20 (12 route modules total: auth, education, experience, projects, skills, social-links, strengths, interests, languages, news, users, contact-messages).
+- Produces: a single mounted router consumed only by `server.ts` — nothing in this plan depends on anything after this task.
+
+- [ ] **Step 1: Implement the aggregator**
+
+```typescript
+import { Router } from 'express';
+import authRoutes from './auth.routes';
+import educationRoutes from './education.routes';
+import experienceRoutes from './experience.routes';
+import projectRoutes from './project.routes';
+import skillRoutes from './skill.routes';
+import socialLinkRoutes from './social-link.routes';
+import strengthRoutes from './strength.routes';
+import interestRoutes from './interest.routes';
+import languageRoutes from './language.routes';
+import newsRoutes from './news.routes';
+import userRoutes from './user.routes';
+import contactMessageRoutes from './contact-message.routes';
+
+const router = Router();
+
+router.use('/auth', authRoutes);
+router.use('/education', educationRoutes);
+router.use('/experience', experienceRoutes);
+router.use('/projects', projectRoutes);
+router.use('/skills', skillRoutes);
+router.use('/social-links', socialLinkRoutes);
+router.use('/strengths', strengthRoutes);
+router.use('/interests', interestRoutes);
+router.use('/languages', languageRoutes);
+router.use('/news', newsRoutes);
+router.use('/users', userRoutes);
+router.use('/contact-messages', contactMessageRoutes);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/index.ts`.
+
+- [ ] **Step 2: Mount it in `server.ts`**
+
+In `backEnd/src/server.ts`, replace lines 56-59 (the `// TODO: Ajouter les routes API ici` block):
+
+```typescript
+app.use(envConfig.apiPrefix, apiRoutes);
+```
+
+And add the import near the top, alongside the other imports (after the `errorMiddleware` import added in Task 4):
+
+```typescript
+import apiRoutes from './infrastructure/routes';
+```
+
+- [ ] **Step 3: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 4: Run the entire backend test suite**
+
+Run: `cd backEnd && npm test`
+Expected: every `.test.ts` file across `shared/exceptions`, `infrastructure/middlewares`, `infrastructure/repositories`, and all 11 `use-cases/<resource>` directories passes. No failures.
+
+- [ ] **Step 5: Run lint and format checks**
+
+Run: `cd backEnd && npm run lint && npm run format:check`
+Expected: both exit 0. If either reports issues in files this plan created, fix them directly (per the existing convention from the CI quality-gate work — these are real issues the tooling correctly catches, not false positives).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backEnd/src/infrastructure/routes/index.ts backEnd/src/server.ts
+git commit -m "Mount all API routes in server.ts"
+```
+
+---
+
+## After all tasks: manual steps for the user
+
+These cannot be done by an agent and must be done by the user before the API is actually usable end-to-end:
+
+1. Set up a real PostgreSQL database and a real `.env` file (the `.env.example` additions from Task 9 — `ADMIN_EMAIL`/`ADMIN_PASSWORD` — need real values, not the placeholders).
+2. Run `npm run seed:admin` once against that real database to create the one admin user `POST /auth/login` authenticates against.
+3. Manually exercise the API end-to-end (e.g. with `curl` or Postman) — this plan's tests are all unit tests against mocked repositories, per the design spec's explicit non-goal of DB-backed/integration tests. Nothing in this plan has run a real HTTP request against a real database.
+4. Decide whether/when to wire `npm test` into the CI quality-gate workflow's job list (noted as a deferred follow-up in the design spec) — it isn't part of `pr-quality-gate.yml` yet.
+5. Frontend integration is a separate, future plan — this one is backend-only.
