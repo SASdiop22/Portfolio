@@ -1,7 +1,6 @@
-import { Education } from '../models/Education';
-import { IBaseRepository } from './IBaseRepository';
+import { EducationModel } from '@domain/models';
 
-export interface IEducationRepository extends IBaseRepository<Education> {
-  findByOrder(): Promise<Education[]>;
-  findCurrent(): Promise<Education[]>;
+export interface IEducationRepository {
+  findByOrder(): Promise<EducationModel[]>;
+  findCurrent(): Promise<EducationModel[]>;
 }

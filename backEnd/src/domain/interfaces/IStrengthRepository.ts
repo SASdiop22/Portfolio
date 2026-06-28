@@ -1,6 +1,5 @@
-import { Strength } from '../models/Strength';
-import { IBaseRepository } from './IBaseRepository';
+import { StrengthModel } from '@domain/models';
 
-export interface IStrengthRepository extends IBaseRepository<Strength> {
-  findByOrder(): Promise<Strength[]>;
+export interface IStrengthRepository {
+  findByOrder(): Promise<StrengthModel[]>;
 }
