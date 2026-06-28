@@ -1,0 +1,2994 @@
+# Backend API Layer Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build the full HTTP API for all 11 backend resources (Education, Experience, Project, Skill, SocialLink, Strength, Interest, Language, User, ContactMessage, News) plus JWT auth and a User photo upload endpoint.
+
+**Architecture:** Each resource gets a repository implementation (extending a shared `BaseRepository`), use-cases (one class per action), DTOs validated via `class-validator`, a controller, and a route — wired through shared exceptions and an error middleware. JWT auth protects admin write routes via a per-route `authMiddleware`.
+
+**Tech Stack:** Express, TypeORM, `class-validator`/`class-transformer`, `jsonwebtoken`, `bcryptjs`, `multer`, Jest + `ts-jest` (added in Task 2).
+
+## Global Constraints
+
+- All routes mount under `envConfig.apiPrefix` (`/api/v1`).
+- Public/admin access direction per resource (from the spec): most resources are public-read (`GET`) + admin-write (`POST`/`PUT`/`DELETE`); `User` is public-`GET /users/profile` + admin-`PUT /users/profile` + admin-`POST /users/photo` (no create/delete/list — single record); `ContactMessage` is public-`POST /contact-messages` (no auth) + admin-`GET`/`PATCH .../read`/`DELETE` (no public read).
+- No DB migrations — `synchronize: true` (dev-only, already configured in `backEnd/src/infrastructure/database/config/data-source.ts`) handles schema.
+- No DB-backed/integration tests — only use-cases get unit tests, with the repository mocked.
+- No public user registration — the one admin user is created via a seed script (Task 9), not an API endpoint.
+- Follow the codebase's existing import convention: relative imports (`../models/Education`), not the `@domain/*`/`@infrastructure/*` TypeScript path aliases defined in `tsconfig.json` — the codebase already hit a real bug from barrel-file aliasing earlier and moved away from it.
+- Response envelope for errors matches what's already in `backEnd/src/server.ts`: `{ success: false, message, ... }`.
+
+---
+
+### Task 1: Fix domain model field gaps
+
+**Files:**
+- Modify: `backEnd/src/domain/models/Project.ts`
+- Modify: `backEnd/src/domain/models/Skill.ts`
+- Modify: `backEnd/src/domain/models/Education.ts`
+- Modify: `backEnd/src/domain/models/Experience.ts`
+- Modify: `backEnd/src/domain/models/SocialLink.ts`
+- Modify: `backEnd/src/domain/models/Interest.ts`
+- Modify: `backEnd/src/domain/models/Language.ts`
+- Modify: `backEnd/src/domain/models/News.ts`
+
+**Interfaces:**
+- Produces: the exact model shapes every later task's DTOs, repository `toModel()` mappings, and use-case tests are written against. Get this task's field lists right — everything downstream copies them.
+
+`ProjectEntity` already has a `technologies!: string[]` column and `SkillEntity` already has `level?: number`/`icon?: string` columns, but their domain models don't expose these fields — the spec requires Project's "technologies utilisées" and Skill's proficiency level, so the API can't satisfy the spec without this fix. Separately, every entity except `ContactMessageEntity` has an `@UpdateDateColumn() updatedAt`, but only `StrengthModel` exposes it on the model side — adding it everywhere lets admin UIs show a real "last modified" time.
+
+- [ ] **Step 1: Update `ProjectModel`**
+
+```typescript
+export class ProjectModel {
+    public id: string;
+    public title: string;
+    public description: string;
+    public longDescription: string;
+    public technologies: string[];
+    public imageUrl: string;
+    public demoUrl: string;
+    public githubUrl: string;
+    public featured: boolean;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+- [ ] **Step 2: Update `SkillModel`**
+
+```typescript
+export class SkillModel {
+    public id: string;
+    public title: string;
+    public category: string;
+    public level: number;
+    public icon: string;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+- [ ] **Step 3: Add `updatedAt` to the remaining models**
+
+`backEnd/src/domain/models/Education.ts`:
+```typescript
+export class EducationModel {
+    public id: string;
+    public institution: string;
+    public city: string;
+    public title: string;
+    public specialization: string;
+    public description: string;
+    public startDate: Date;
+    public endDate: Date;
+    public current: boolean;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+`backEnd/src/domain/models/Experience.ts`:
+```typescript
+export class ExperienceModel {
+    public id: string;
+    public company: string;
+    public position: string;
+    public city: string;
+    public title: string;
+    public description: string;
+    public startDate: Date;
+    public endDate: Date;
+    public current: boolean;
+    public link: string;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+`backEnd/src/domain/models/SocialLink.ts`:
+```typescript
+export class SocialLinkModel {
+    public id: string;
+    public platform: string;
+    public url: string;
+    public logo: string;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+`backEnd/src/domain/models/Interest.ts`:
+```typescript
+export class InterestModel {
+    public id: string;
+    public title: string;
+    public description: string;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+`backEnd/src/domain/models/Language.ts`:
+```typescript
+export class LanguageModel {
+    public id: string;
+    public title: string;
+    public level: string;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+`backEnd/src/domain/models/News.ts`:
+```typescript
+export class NewsModel {
+    public id: string;
+    public title: string;
+    public content: string;
+    public summary: string;
+    public category: string;
+    public imageUrl: string;
+    public publishedAt: Date;
+    public order: number;
+    public createdAt: Date;
+    public updatedAt: Date;
+}
+```
+
+- [ ] **Step 4: Verify it compiles**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors (these are additive field changes; nothing currently constructs these models with required fields missing, since TypeScript classes here use public fields with no constructor — adding fields can't break existing call sites).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backEnd/src/domain/models/Project.ts backEnd/src/domain/models/Skill.ts backEnd/src/domain/models/Education.ts backEnd/src/domain/models/Experience.ts backEnd/src/domain/models/SocialLink.ts backEnd/src/domain/models/Interest.ts backEnd/src/domain/models/Language.ts backEnd/src/domain/models/News.ts
+git commit -m "Add missing fields to domain models (technologies, level, icon, updatedAt)"
+```
+
+---
+
+### Task 2: Jest test setup
+
+**Files:**
+- Modify: `backEnd/package.json`
+- Create: `backEnd/jest.config.js`
+- Create: `backEnd/src/domain/models/Education.test.ts` (throwaway smoke test, deleted at the end of this task)
+
+**Interfaces:**
+- Produces: `npm test` script; every later task's `*.test.ts` files run under this config.
+
+- [ ] **Step 1: Add devDependencies**
+
+In `backEnd/package.json`, in `devDependencies`, add:
+
+```json
+"jest": "^29.7.0",
+"ts-jest": "^29.2.5",
+"@types/jest": "^29.5.12"
+```
+
+- [ ] **Step 2: Add the test script**
+
+In `backEnd/package.json`, in `scripts`, add:
+
+```json
+"test": "jest"
+```
+
+- [ ] **Step 3: Install dependencies**
+
+Run: `cd backEnd && npm install`
+Expected: install completes with no errors.
+
+- [ ] **Step 4: Create the Jest config**
+
+```javascript
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  testMatch: ['**/*.test.ts'],
+};
+```
+Save as `backEnd/jest.config.js`.
+
+- [ ] **Step 5: Write a throwaway smoke test to verify the setup works**
+
+```typescript
+import { EducationModel } from './Education';
+
+describe('Jest setup smoke test', () => {
+  it('can instantiate a domain model', () => {
+    const model = new EducationModel();
+    model.title = 'Test';
+    expect(model.title).toBe('Test');
+  });
+});
+```
+Save as `backEnd/src/domain/models/Education.test.ts`.
+
+- [ ] **Step 6: Run it**
+
+Run: `cd backEnd && npm test`
+Expected: `1 passed`, `Tests: 1 passed, 1 total`.
+
+- [ ] **Step 7: Delete the throwaway test**
+
+```bash
+rm backEnd/src/domain/models/Education.test.ts
+```
+This was only to verify the Jest/ts-jest pipeline works end-to-end; real tests start in Task 6.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backEnd/package.json backEnd/package-lock.json backEnd/jest.config.js
+git commit -m "Add Jest test setup"
+```
+
+---
+
+### Task 3: Shared exceptions
+
+**Files:**
+- Create: `backEnd/src/shared/exceptions/AppException.ts`
+- Create: `backEnd/src/shared/exceptions/NotFoundException.ts`
+- Create: `backEnd/src/shared/exceptions/ValidationException.ts`
+- Create: `backEnd/src/shared/exceptions/UnauthorizedException.ts`
+- Test: `backEnd/src/shared/exceptions/AppException.test.ts`
+
+**Interfaces:**
+- Produces: `AppException` (base class, `statusCode: number`, `message: string`), `NotFoundException(message: string)` → statusCode 404, `ValidationException(message: string, errors: string[])` → statusCode 400, carries `errors`, `UnauthorizedException(message: string)` → statusCode 401. Every later task's use-cases throw these; Task 5's error middleware catches them.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+import { AppException } from './AppException';
+import { NotFoundException } from './NotFoundException';
+import { ValidationException } from './ValidationException';
+import { UnauthorizedException } from './UnauthorizedException';
+
+describe('exceptions', () => {
+  it('NotFoundException has statusCode 404 and is an AppException', () => {
+    const err = new NotFoundException('Education not found');
+    expect(err).toBeInstanceOf(AppException);
+    expect(err.statusCode).toBe(404);
+    expect(err.message).toBe('Education not found');
+  });
+
+  it('ValidationException has statusCode 400 and carries errors', () => {
+    const err = new ValidationException('Validation failed', ['title is required']);
+    expect(err.statusCode).toBe(400);
+    expect(err.errors).toEqual(['title is required']);
+  });
+
+  it('UnauthorizedException has statusCode 401', () => {
+    const err = new UnauthorizedException('Invalid credentials');
+    expect(err.statusCode).toBe(401);
+  });
+});
+```
+Save as `backEnd/src/shared/exceptions/AppException.test.ts`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backEnd && npx jest AppException.test.ts`
+Expected: FAIL — `Cannot find module './AppException'` (none of the four files exist yet).
+
+- [ ] **Step 3: Implement `AppException`**
+
+```typescript
+export abstract class AppException extends Error {
+  public readonly statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.statusCode = statusCode;
+    this.name = this.constructor.name;
+  }
+}
+```
+Save as `backEnd/src/shared/exceptions/AppException.ts`.
+
+- [ ] **Step 4: Implement `NotFoundException`**
+
+```typescript
+import { AppException } from './AppException';
+
+export class NotFoundException extends AppException {
+  constructor(message: string) {
+    super(message, 404);
+  }
+}
+```
+Save as `backEnd/src/shared/exceptions/NotFoundException.ts`.
+
+- [ ] **Step 5: Implement `ValidationException`**
+
+```typescript
+import { AppException } from './AppException';
+
+export class ValidationException extends AppException {
+  public readonly errors: string[];
+
+  constructor(message: string, errors: string[]) {
+    super(message, 400);
+    this.errors = errors;
+  }
+}
+```
+Save as `backEnd/src/shared/exceptions/ValidationException.ts`.
+
+- [ ] **Step 6: Implement `UnauthorizedException`**
+
+```typescript
+import { AppException } from './AppException';
+
+export class UnauthorizedException extends AppException {
+  constructor(message: string) {
+    super(message, 401);
+  }
+}
+```
+Save as `backEnd/src/shared/exceptions/UnauthorizedException.ts`.
+
+- [ ] **Step 7: Run test to verify it passes**
+
+Run: `cd backEnd && npx jest AppException.test.ts`
+Expected: PASS — `Tests: 3 passed, 3 total`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backEnd/src/shared/exceptions/
+git commit -m "Add shared exception classes"
+```
+
+---
+
+### Task 4: Error middleware
+
+**Files:**
+- Create: `backEnd/src/infrastructure/middlewares/error.middleware.ts`
+- Modify: `backEnd/src/server.ts:74-85`
+- Test: `backEnd/src/infrastructure/middlewares/error.middleware.test.ts`
+
+**Interfaces:**
+- Consumes: `AppException` (Task 3).
+- Produces: `errorMiddleware` — an Express 4-arg error-handling middleware, mounted last in `server.ts`. Every later controller relies on uncaught `AppException`s reaching this middleware instead of crashing the process.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+import { Request, Response } from 'express';
+import { errorMiddleware } from './error.middleware';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+function mockResponse() {
+  const res: Partial<Response> = {};
+  res.status = jest.fn().mockReturnValue(res);
+  res.json = jest.fn().mockReturnValue(res);
+  return res as Response;
+}
+
+describe('errorMiddleware', () => {
+  it('responds with the exception statusCode and message for an AppException', () => {
+    const res = mockResponse();
+    const err = new NotFoundException('Education not found');
+
+    errorMiddleware(err, {} as Request, res, jest.fn());
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Education not found' });
+  });
+
+  it('responds with 500 for an unrecognized error', () => {
+    const res = mockResponse();
+    const err = new Error('boom');
+
+    errorMiddleware(err, {} as Request, res, jest.fn());
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, message: 'Erreur interne du serveur' }),
+    );
+  });
+});
+```
+Save as `backEnd/src/infrastructure/middlewares/error.middleware.test.ts`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backEnd && npx jest error.middleware.test.ts`
+Expected: FAIL — `Cannot find module './error.middleware'`.
+
+- [ ] **Step 3: Implement the middleware**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppException } from '../../shared/exceptions/AppException';
+import { ValidationException } from '../../shared/exceptions/ValidationException';
+import { envConfig } from '../../config/env.config';
+
+// Express identifies error-handling middleware by its 4-argument arity, so `next`
+// must stay in the signature even though it's unused.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function errorMiddleware(err: Error, req: Request, res: Response, next: NextFunction): void {
+  if (err instanceof ValidationException) {
+    res.status(err.statusCode).json({ success: false, message: err.message, errors: err.errors });
+    return;
+  }
+
+  if (err instanceof AppException) {
+    res.status(err.statusCode).json({ success: false, message: err.message });
+    return;
+  }
+
+  console.error('❌ Erreur:', err);
+  res.status(500).json({
+    success: false,
+    message: 'Erreur interne du serveur',
+    error: envConfig.nodeEnv === 'development' ? err.message : undefined,
+  });
+}
+```
+Save as `backEnd/src/infrastructure/middlewares/error.middleware.ts`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd backEnd && npx jest error.middleware.test.ts`
+Expected: PASS — `Tests: 2 passed, 2 total`.
+
+- [ ] **Step 5: Wire it into `server.ts`**
+
+In `backEnd/src/server.ts`, replace lines 74-85 (the `// Gestionnaire d'erreurs global` comment through the closing `});`):
+
+```typescript
+// Gestionnaire d'erreurs global
+app.use(errorMiddleware);
+```
+
+And add the import near the top, after the `initializeDatabase` import (line 11):
+
+```typescript
+import { errorMiddleware } from './infrastructure/middlewares/error.middleware';
+```
+
+- [ ] **Step 6: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backEnd/src/infrastructure/middlewares/error.middleware.ts backEnd/src/infrastructure/middlewares/error.middleware.test.ts backEnd/src/server.ts
+git commit -m "Add error middleware, wire into server.ts"
+```
+
+---
+
+### Task 5: Validation middleware
+
+**Files:**
+- Create: `backEnd/src/infrastructure/middlewares/validate.middleware.ts`
+- Test: `backEnd/src/infrastructure/middlewares/validate.middleware.test.ts`
+
+**Interfaces:**
+- Consumes: `ValidationException` (Task 3).
+- Produces: `validate(DtoClass: ClassConstructor<object>)` — a factory returning Express middleware `(req, res, next) => void`. Every resource's `POST`/`PUT` route (from Task 10 onward) uses `validate(CreateXDto)`/`validate(UpdateXDto)`.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { IsString, IsNotEmpty } from 'class-validator';
+import { validate } from './validate.middleware';
+import { ValidationException } from '../../shared/exceptions/ValidationException';
+
+class TestDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+}
+
+describe('validate middleware', () => {
+  it('calls next() when the body satisfies the DTO', async () => {
+    const req = { body: { title: 'Hello' } } as Request;
+    const next = jest.fn();
+
+    await validate(TestDto)(req, {} as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith();
+    expect(req.body).toBeInstanceOf(TestDto);
+  });
+
+  it('calls next() with a ValidationException when the body fails the DTO', async () => {
+    const req = { body: { title: '' } } as Request;
+    const next = jest.fn();
+
+    await validate(TestDto)(req, {} as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith(expect.any(ValidationException));
+  });
+});
+```
+Save as `backEnd/src/infrastructure/middlewares/validate.middleware.test.ts`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backEnd && npx jest validate.middleware.test.ts`
+Expected: FAIL — `Cannot find module './validate.middleware'`.
+
+- [ ] **Step 3: Implement the middleware**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { plainToInstance, ClassConstructor } from 'class-transformer';
+import { validate as classValidatorValidate } from 'class-validator';
+import { ValidationException } from '../../shared/exceptions/ValidationException';
+
+export function validate<T extends object>(DtoClass: ClassConstructor<T>) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const instance = plainToInstance(DtoClass, req.body);
+    const errors = await classValidatorValidate(instance);
+
+    if (errors.length > 0) {
+      const messages = errors.flatMap((e) => Object.values(e.constraints ?? {}));
+      next(new ValidationException('Validation failed', messages));
+      return;
+    }
+
+    req.body = instance;
+    next();
+  };
+}
+```
+Save as `backEnd/src/infrastructure/middlewares/validate.middleware.ts`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd backEnd && npx jest validate.middleware.test.ts`
+Expected: PASS — `Tests: 2 passed, 2 total`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backEnd/src/infrastructure/middlewares/validate.middleware.ts backEnd/src/infrastructure/middlewares/validate.middleware.test.ts
+git commit -m "Add request validation middleware"
+```
+
+---
+
+### Task 6: BaseRepository
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/BaseRepository.ts`
+- Test: `backEnd/src/infrastructure/repositories/BaseRepository.test.ts`
+
+**Interfaces:**
+- Produces: `abstract class BaseRepository<TModel, TEntity extends ObjectLiteral>` with `constructor(protected readonly repository: Repository<TEntity>)`, `protected abstract toModel(entity: TEntity): TModel`, and concrete methods `findAll(): Promise<TModel[]>`, `findById(id: string): Promise<TModel | null>`, `create(data: Partial<TModel>): Promise<TModel>`, `update(id: string, data: Partial<TModel>): Promise<TModel | null>`, `delete(id: string): Promise<boolean>`. Every resource's concrete repository (Task 10 onward) extends this and implements `toModel`.
+
+- [ ] **Step 1: Write the failing test**
+
+This test uses a fake TypeORM `Repository` (plain object with jest mock functions) rather than a real database — `BaseRepository` only calls a handful of `Repository` methods, so faking those is enough to test its own logic in isolation.
+
+```typescript
+import { BaseRepository } from './BaseRepository';
+import { Repository } from 'typeorm';
+
+interface FakeEntity {
+  id: string;
+  title: string;
+}
+
+interface FakeModel {
+  id: string;
+  title: string;
+}
+
+class TestRepository extends BaseRepository<FakeModel, FakeEntity> {
+  protected toModel(entity: FakeEntity): FakeModel {
+    return { id: entity.id, title: entity.title };
+  }
+}
+
+function fakeRepository() {
+  return {
+    find: jest.fn(),
+    findOne: jest.fn(),
+    create: jest.fn(),
+    save: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+  };
+}
+
+describe('BaseRepository', () => {
+  it('findAll maps every entity through toModel', async () => {
+    const repo = fakeRepository();
+    repo.find.mockResolvedValue([{ id: '1', title: 'A' }, { id: '2', title: 'B' }]);
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.findAll();
+
+    expect(result).toEqual([{ id: '1', title: 'A' }, { id: '2', title: 'B' }]);
+  });
+
+  it('findById returns null when nothing is found', async () => {
+    const repo = fakeRepository();
+    repo.findOne.mockResolvedValue(null);
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.findById('missing');
+
+    expect(result).toBeNull();
+  });
+
+  it('findById maps the found entity through toModel', async () => {
+    const repo = fakeRepository();
+    repo.findOne.mockResolvedValue({ id: '1', title: 'A' });
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.findById('1');
+
+    expect(result).toEqual({ id: '1', title: 'A' });
+  });
+
+  it('create saves the entity and returns the mapped model', async () => {
+    const repo = fakeRepository();
+    repo.create.mockReturnValue({ id: '1', title: 'A' });
+    repo.save.mockResolvedValue({ id: '1', title: 'A' });
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.create({ title: 'A' });
+
+    expect(repo.create).toHaveBeenCalledWith({ title: 'A' });
+    expect(repo.save).toHaveBeenCalledWith({ id: '1', title: 'A' });
+    expect(result).toEqual({ id: '1', title: 'A' });
+  });
+
+  it('update updates then returns the re-fetched mapped model', async () => {
+    const repo = fakeRepository();
+    repo.update.mockResolvedValue({ affected: 1 });
+    repo.findOne.mockResolvedValue({ id: '1', title: 'Updated' });
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.update('1', { title: 'Updated' });
+
+    expect(repo.update).toHaveBeenCalledWith('1', { title: 'Updated' });
+    expect(result).toEqual({ id: '1', title: 'Updated' });
+  });
+
+  it('update returns null when the entity no longer exists after updating', async () => {
+    const repo = fakeRepository();
+    repo.update.mockResolvedValue({ affected: 0 });
+    repo.findOne.mockResolvedValue(null);
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.update('missing', { title: 'X' });
+
+    expect(result).toBeNull();
+  });
+
+  it('delete returns true when a row was affected', async () => {
+    const repo = fakeRepository();
+    repo.delete.mockResolvedValue({ affected: 1 });
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.delete('1');
+
+    expect(result).toBe(true);
+  });
+
+  it('delete returns false when no row was affected', async () => {
+    const repo = fakeRepository();
+    repo.delete.mockResolvedValue({ affected: 0 });
+    const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
+
+    const result = await sut.delete('missing');
+
+    expect(result).toBe(false);
+  });
+});
+```
+Save as `backEnd/src/infrastructure/repositories/BaseRepository.test.ts`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backEnd && npx jest BaseRepository.test.ts`
+Expected: FAIL — `Cannot find module './BaseRepository'`.
+
+- [ ] **Step 3: Implement `BaseRepository`**
+
+```typescript
+import { Repository, ObjectLiteral, FindOptionsWhere } from 'typeorm';
+
+export abstract class BaseRepository<TModel, TEntity extends ObjectLiteral> {
+  constructor(protected readonly repository: Repository<TEntity>) {}
+
+  protected abstract toModel(entity: TEntity): TModel;
+
+  async findAll(): Promise<TModel[]> {
+    const entities = await this.repository.find();
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findById(id: string): Promise<TModel | null> {
+    const entity = await this.repository.findOne({
+      where: { id } as unknown as FindOptionsWhere<TEntity>,
+    });
+    return entity ? this.toModel(entity) : null;
+  }
+
+  async create(data: Partial<TModel>): Promise<TModel> {
+    const entity = this.repository.create(data as unknown as Partial<TEntity>);
+    const saved = await this.repository.save(entity);
+    return this.toModel(saved);
+  }
+
+  async update(id: string, data: Partial<TModel>): Promise<TModel | null> {
+    await this.repository.update(id, data as unknown as Partial<TEntity>);
+    return this.findById(id);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const result = await this.repository.delete(id);
+    return (result.affected ?? 0) > 0;
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/BaseRepository.ts`.
+
+Note: `update()` re-fetches via `findById` rather than trusting `result.affected` directly, since the test "update returns null when the entity no longer exists" expects a `findOne` call to happen regardless — this also means `update`'s `findOne` call in the test mocks must be set up to return the right value (already done above).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd backEnd && npx jest BaseRepository.test.ts`
+Expected: PASS — `Tests: 8 passed, 8 total`.
+
+- [ ] **Step 5: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/BaseRepository.ts backEnd/src/infrastructure/repositories/BaseRepository.test.ts
+git commit -m "Add generic BaseRepository"
+```
+
+---
+
+### Task 7: Auth middleware
+
+**Files:**
+- Create: `backEnd/src/infrastructure/middlewares/auth.middleware.ts`
+- Test: `backEnd/src/infrastructure/middlewares/auth.middleware.test.ts`
+
+**Interfaces:**
+- Consumes: `UnauthorizedException` (Task 3), `envConfig.jwt.secret` (already in `backEnd/src/config/env.config.ts`).
+- Produces: `authMiddleware(req, res, next)` — Express middleware. On success, sets `req.user = { userId: string; email: string }`. Every admin route (Task 8's login excepted, and every resource's write routes from Task 10 onward) chains this before the controller.
+- Also produces: an Express type augmentation so `req.user` is recognized by TypeScript everywhere else in the codebase.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { authMiddleware } from './auth.middleware';
+import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
+import { envConfig } from '../../config/env.config';
+
+describe('authMiddleware', () => {
+  it('calls next() and sets req.user when the token is valid', () => {
+    const token = jwt.sign({ userId: '1', email: 'a@b.com' }, envConfig.jwt.secret);
+    const req = { headers: { authorization: `Bearer ${token}` } } as unknown as Request;
+    const next = jest.fn();
+
+    authMiddleware(req, {} as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith();
+    expect(req.user).toEqual(expect.objectContaining({ userId: '1', email: 'a@b.com' }));
+  });
+
+  it('calls next() with UnauthorizedException when no header is present', () => {
+    const req = { headers: {} } as unknown as Request;
+    const next = jest.fn();
+
+    authMiddleware(req, {} as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith(expect.any(UnauthorizedException));
+  });
+
+  it('calls next() with UnauthorizedException when the token is invalid', () => {
+    const req = { headers: { authorization: 'Bearer not-a-real-token' } } as unknown as Request;
+    const next = jest.fn();
+
+    authMiddleware(req, {} as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith(expect.any(UnauthorizedException));
+  });
+});
+```
+Save as `backEnd/src/infrastructure/middlewares/auth.middleware.test.ts`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd backEnd && npx jest auth.middleware.test.ts`
+Expected: FAIL — `Cannot find module './auth.middleware'`.
+
+- [ ] **Step 3: Add the Express type augmentation**
+
+```typescript
+export interface AuthenticatedUser {
+  userId: string;
+  email: string;
+}
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser;
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/middlewares/express.d.ts`.
+
+- [ ] **Step 4: Implement the middleware**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { envConfig } from '../../config/env.config';
+import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
+import { AuthenticatedUser } from './express.d';
+
+export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+
+  if (!header || !header.startsWith('Bearer ')) {
+    next(new UnauthorizedException('Missing or malformed Authorization header'));
+    return;
+  }
+
+  const token = header.slice('Bearer '.length);
+
+  try {
+    const payload = jwt.verify(token, envConfig.jwt.secret) as AuthenticatedUser;
+    req.user = { userId: payload.userId, email: payload.email };
+    next();
+  } catch {
+    next(new UnauthorizedException('Invalid or expired token'));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/middlewares/auth.middleware.ts`.
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `cd backEnd && npx jest auth.middleware.test.ts`
+Expected: PASS — `Tests: 3 passed, 3 total`.
+
+- [ ] **Step 6: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backEnd/src/infrastructure/middlewares/auth.middleware.ts backEnd/src/infrastructure/middlewares/auth.middleware.test.ts backEnd/src/infrastructure/middlewares/express.d.ts
+git commit -m "Add JWT auth middleware"
+```
+
+---
+
+### Task 8: Auth (login)
+
+**Files:**
+- Modify: `backEnd/src/domain/interfaces/IUserRepository.ts`
+- Create: `backEnd/src/infrastructure/repositories/UserRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/auth/LoginDto.ts`
+- Create: `backEnd/src/use-cases/auth/LoginUseCase.ts`
+- Create: `backEnd/src/infrastructure/controllers/AuthController.ts`
+- Create: `backEnd/src/infrastructure/routes/auth.routes.ts`
+- Test: `backEnd/src/use-cases/auth/LoginUseCase.test.ts`
+
+**Interfaces:**
+- Consumes: `BaseRepository` (Task 6), `UnauthorizedException` (Task 3), `validate` (Task 5).
+- Produces: `UserRepository` (implements `IUserRepository`, also used by Task 18's User profile endpoints — built here because login needs it first), `LoginUseCase.execute({ email, password }): Promise<{ token: string; user: { id, email, firstName, lastName } }>`, mounted route `POST /api/v1/auth/login`.
+
+`IUserRepository.findByEmail` is currently typed `Promise<UserModel>` (non-nullable), but "no user with this email" is an expected, normal case for a login attempt — Step 1 corrects this to `Promise<UserModel | null>` so the use-case can branch on it without a repository ever needing to fabricate a fake value or throw from inside the repository layer.
+
+- [ ] **Step 1: Fix `IUserRepository.findByEmail` to be nullable**
+
+```typescript
+import { UserModel } from '../models/User';
+
+export interface IUserRepository {
+  findByEmail(email: string): Promise<UserModel | null>;
+}
+```
+Save as `backEnd/src/domain/interfaces/IUserRepository.ts` (replacing its current content).
+
+- [ ] **Step 2: Implement `UserRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { UserModel } from '../../domain/models/User';
+import { UserEntity } from '../entities/UserEntity';
+import { IUserRepository } from '../../domain/interfaces/IUserRepository';
+
+export class UserRepository extends BaseRepository<UserModel, UserEntity> implements IUserRepository {
+  constructor(repository: Repository<UserEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: UserEntity): UserModel {
+    const model = new UserModel();
+    model.id = entity.id;
+    model.firstName = entity.firstName;
+    model.lastName = entity.lastName;
+    model.email = entity.email;
+    model.password = entity.password;
+    model.birthDate = entity.birthDate;
+    model.desiredPosition = entity.desiredPosition;
+    model.tagline = entity.tagline;
+    model.photo = entity.photo ?? '';
+    model.city = entity.city ?? '';
+    model.mobility = entity.mobility ?? '';
+    model.phone = entity.phone ?? '';
+    model.createdAt = entity.createdAt;
+    return model;
+  }
+
+  async findByEmail(email: string): Promise<UserModel | null> {
+    const entity = await this.repository.findOne({ where: { email } });
+    return entity ? this.toModel(entity) : null;
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/UserRepository.ts`.
+
+- [ ] **Step 3: Write the failing test for `LoginUseCase`**
+
+```typescript
+import { LoginUseCase } from './LoginUseCase';
+import { IUserRepository } from '../../domain/interfaces/IUserRepository';
+import { UserModel } from '../../domain/models/User';
+import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
+import bcrypt from 'bcryptjs';
+
+jest.mock('bcryptjs');
+
+function buildUser(): UserModel {
+  const user = new UserModel();
+  user.id = '1';
+  user.email = 'admin@example.com';
+  user.password = 'hashed-password';
+  user.firstName = 'Ada';
+  user.lastName = 'Lovelace';
+  return user;
+}
+
+describe('LoginUseCase', () => {
+  it('returns a token and user info when credentials are valid', async () => {
+    const repository: IUserRepository = { findByEmail: jest.fn().mockResolvedValue(buildUser()) };
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+    const sut = new LoginUseCase(repository);
+
+    const result = await sut.execute({ email: 'admin@example.com', password: 'plain-password' });
+
+    expect(result.user).toEqual({ id: '1', email: 'admin@example.com', firstName: 'Ada', lastName: 'Lovelace' });
+    expect(typeof result.token).toBe('string');
+  });
+
+  it('throws UnauthorizedException when the email is not found', async () => {
+    const repository: IUserRepository = { findByEmail: jest.fn().mockResolvedValue(null) };
+    const sut = new LoginUseCase(repository);
+
+    await expect(sut.execute({ email: 'nobody@example.com', password: 'x' })).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it('throws UnauthorizedException when the password does not match', async () => {
+    const repository: IUserRepository = { findByEmail: jest.fn().mockResolvedValue(buildUser()) };
+    (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+    const sut = new LoginUseCase(repository);
+
+    await expect(sut.execute({ email: 'admin@example.com', password: 'wrong' })).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+});
+```
+Save as `backEnd/src/use-cases/auth/LoginUseCase.test.ts`.
+
+- [ ] **Step 4: Run test to verify it fails**
+
+Run: `cd backEnd && npx jest LoginUseCase.test.ts`
+Expected: FAIL — `Cannot find module './LoginUseCase'`.
+
+- [ ] **Step 5: Implement `LoginUseCase`**
+
+```typescript
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { IUserRepository } from '../../domain/interfaces/IUserRepository';
+import { UnauthorizedException } from '../../shared/exceptions/UnauthorizedException';
+import { envConfig } from '../../config/env.config';
+
+export interface LoginInput {
+  email: string;
+  password: string;
+}
+
+export interface LoginOutput {
+  token: string;
+  user: { id: string; email: string; firstName: string; lastName: string };
+}
+
+export class LoginUseCase {
+  constructor(private readonly userRepository: IUserRepository) {}
+
+  async execute({ email, password }: LoginInput): Promise<LoginOutput> {
+    const user = await this.userRepository.findByEmail(email);
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const passwordMatches = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const token = jwt.sign({ userId: user.id, email: user.email }, envConfig.jwt.secret, {
+      expiresIn: envConfig.jwt.expiresIn,
+    });
+
+    return {
+      token,
+      user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName },
+    };
+  }
+}
+```
+Save as `backEnd/src/use-cases/auth/LoginUseCase.ts`.
+
+- [ ] **Step 6: Run test to verify it passes**
+
+Run: `cd backEnd && npx jest LoginUseCase.test.ts`
+Expected: PASS — `Tests: 3 passed, 3 total`.
+
+- [ ] **Step 7: Create the login DTO**
+
+```typescript
+import { IsEmail, IsString, IsNotEmpty } from 'class-validator';
+
+export class LoginDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+}
+```
+Save as `backEnd/src/infrastructure/dto/auth/LoginDto.ts`.
+
+- [ ] **Step 8: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { LoginUseCase } from '../../use-cases/auth/LoginUseCase';
+import { UserRepository } from '../repositories/UserRepository';
+import { AppDataSource } from '../database/config/data-source';
+import { UserEntity } from '../entities/UserEntity';
+
+const userRepository = new UserRepository(AppDataSource.getRepository(UserEntity));
+const loginUseCase = new LoginUseCase(userRepository);
+
+export class AuthController {
+  static async login(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await loginUseCase.execute(req.body);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/AuthController.ts`.
+
+- [ ] **Step 9: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { AuthController } from '../controllers/AuthController';
+import { validate } from '../middlewares/validate.middleware';
+import { LoginDto } from '../dto/auth/LoginDto';
+
+const router = Router();
+
+router.post('/login', validate(LoginDto), AuthController.login);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/auth.routes.ts`.
+
+- [ ] **Step 10: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors. (This route isn't mounted in `server.ts` yet — that happens in Task 21 once every resource's routes exist — so it isn't reachable over HTTP yet, but it must still compile cleanly.)
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add backEnd/src/domain/interfaces/IUserRepository.ts backEnd/src/infrastructure/repositories/UserRepository.ts backEnd/src/infrastructure/dto/auth/ backEnd/src/use-cases/auth/ backEnd/src/infrastructure/controllers/AuthController.ts backEnd/src/infrastructure/routes/auth.routes.ts
+git commit -m "Add login use-case, controller, and route"
+```
+
+---
+
+### Task 9: Admin user seed script
+
+**Files:**
+- Modify: `backEnd/src/config/env.config.ts`
+- Modify: `backEnd/.env.example`
+- Modify: `backEnd/package.json`
+- Create: `backEnd/src/infrastructure/database/seeders/admin-user.seed.ts`
+
+**Interfaces:**
+- Consumes: `UserRepository` (Task 8), `AppDataSource` (already in `backEnd/src/infrastructure/database/config/data-source.ts`).
+- Produces: `npm run seed:admin` script. No other task depends on this one's code, but it's the only way to create the one admin account this whole API authenticates against.
+
+- [ ] **Step 1: Add `ADMIN_EMAIL`/`ADMIN_PASSWORD` to the env config**
+
+In `backEnd/src/config/env.config.ts`, add to the `EnvConfig` interface (after the `jwt` block):
+
+```typescript
+  admin: {
+    email: string;
+    password: string;
+  };
+```
+
+And add to `validateConfig()`'s returned object (after the `jwt` block):
+
+```typescript
+      admin: {
+        email: this.getRequired('ADMIN_EMAIL'),
+        password: this.getRequired('ADMIN_PASSWORD'),
+      },
+```
+
+- [ ] **Step 2: Add the env vars to `.env.example`**
+
+In `backEnd/.env.example`, add after the `# JWT` block:
+
+```
+# Admin seed
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=change-this-before-seeding
+```
+
+- [ ] **Step 3: Add the seed script**
+
+In `backEnd/package.json`, in `scripts`, add:
+
+```json
+"seed:admin": "ts-node src/infrastructure/database/seeders/admin-user.seed.ts"
+```
+
+- [ ] **Step 4: Implement the seed script**
+
+```typescript
+import 'reflect-metadata';
+import bcrypt from 'bcryptjs';
+import { AppDataSource } from '../config/data-source';
+import { UserEntity } from '../../entities/UserEntity';
+import { envConfig } from '../../../config/env.config';
+
+async function seedAdminUser(): Promise<void> {
+  await AppDataSource.initialize();
+  const repository = AppDataSource.getRepository(UserEntity);
+
+  const existing = await repository.findOne({ where: { email: envConfig.admin.email } });
+
+  if (existing) {
+    console.log(`Admin user ${envConfig.admin.email} already exists — nothing to do.`);
+    await AppDataSource.destroy();
+    return;
+  }
+
+  const hashedPassword = await bcrypt.hash(envConfig.admin.password, 10);
+
+  const admin = repository.create({
+    firstName: 'Admin',
+    lastName: 'User',
+    email: envConfig.admin.email,
+    password: hashedPassword,
+    birthDate: new Date('1990-01-01'),
+    desiredPosition: 'N/A',
+    tagline: 'N/A',
+  });
+
+  await repository.save(admin);
+  console.log(`Admin user ${envConfig.admin.email} created.`);
+  await AppDataSource.destroy();
+}
+
+seedAdminUser().catch((error) => {
+  console.error('Failed to seed admin user:', error);
+  process.exit(1);
+});
+```
+Save as `backEnd/src/infrastructure/database/seeders/admin-user.seed.ts`.
+
+- [ ] **Step 5: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backEnd/src/config/env.config.ts backEnd/.env.example backEnd/package.json backEnd/src/infrastructure/database/seeders/admin-user.seed.ts
+git commit -m "Add admin user seed script"
+```
+
+This task is not run automatically by anything else in this plan — once the branch is ready to test against a real database, run `npm run seed:admin` manually (with real `ADMIN_EMAIL`/`ADMIN_PASSWORD` values in `.env`) to create the one account `POST /auth/login` will authenticate.
+
+---
+
+### Task 10: Education resource
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/EducationRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/education/CreateEducationDto.ts`
+- Create: `backEnd/src/infrastructure/dto/education/UpdateEducationDto.ts`
+- Create: `backEnd/src/use-cases/education/ListEducationUseCase.ts`
+- Create: `backEnd/src/use-cases/education/GetCurrentEducationUseCase.ts`
+- Create: `backEnd/src/use-cases/education/GetEducationUseCase.ts`
+- Create: `backEnd/src/use-cases/education/CreateEducationUseCase.ts`
+- Create: `backEnd/src/use-cases/education/UpdateEducationUseCase.ts`
+- Create: `backEnd/src/use-cases/education/DeleteEducationUseCase.ts`
+- Create: `backEnd/src/infrastructure/controllers/EducationController.ts`
+- Create: `backEnd/src/infrastructure/routes/education.routes.ts`
+- Test: one `.test.ts` next to each use-case file above (6 files)
+
+**Interfaces:**
+- Consumes: `BaseRepository` (Task 6), `NotFoundException` (Task 3), `validate`/`authMiddleware` (Tasks 5/7), `EducationModel`/`updatedAt` (Task 1).
+- Produces: this is the template — every later resource task (11-20) follows this exact shape (repository extends `BaseRepository`, 5-or-6 use-cases, 2 DTOs, 1 controller, 1 routes file). Mounted route prefix: `/education` (wired into the app in Task 21).
+
+- [ ] **Step 1: Implement `EducationRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { EducationModel } from '../../domain/models/Education';
+import { EducationEntity } from '../entities/EducationEntity';
+import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+
+export class EducationRepository
+  extends BaseRepository<EducationModel, EducationEntity>
+  implements IEducationRepository
+{
+  constructor(repository: Repository<EducationEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: EducationEntity): EducationModel {
+    const model = new EducationModel();
+    model.id = entity.id;
+    model.institution = entity.institution;
+    model.city = entity.city;
+    model.title = entity.title;
+    model.specialization = entity.specialization;
+    model.description = entity.description;
+    model.startDate = entity.startDate;
+    model.endDate = entity.endDate ?? null as unknown as Date;
+    model.current = entity.current;
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<EducationModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findCurrent(): Promise<EducationModel[]> {
+    const entities = await this.repository.find({ where: { current: true }, order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/EducationRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsDateString, IsOptional, IsBoolean, IsInt, Min } from 'class-validator';
+
+export class CreateEducationDto {
+  @IsString()
+  @IsNotEmpty()
+  institution!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  specialization!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  description!: string;
+
+  @IsDateString()
+  startDate!: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  current?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/education/CreateEducationDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsDateString, IsOptional, IsBoolean, IsInt, Min } from 'class-validator';
+
+export class UpdateEducationDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  institution?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  specialization?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  description?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  current?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/education/UpdateEducationDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListEducationUseCase`**
+
+```typescript
+import { ListEducationUseCase } from './ListEducationUseCase';
+import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+import { EducationModel } from '../../domain/models/Education';
+
+describe('ListEducationUseCase', () => {
+  it('returns every education entry ordered by the repository', async () => {
+    const entries = [new EducationModel(), new EducationModel()];
+    const repository: IEducationRepository = {
+      findByOrder: jest.fn().mockResolvedValue(entries),
+      findCurrent: jest.fn(),
+    };
+    const sut = new ListEducationUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/education/ListEducationUseCase.test.ts`.
+
+- [ ] **Step 4: Run test to verify it fails, then implement `ListEducationUseCase`**
+
+Run: `cd backEnd && npx jest ListEducationUseCase.test.ts` — expect FAIL (`Cannot find module`).
+
+```typescript
+import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+import { EducationModel } from '../../domain/models/Education';
+
+export class ListEducationUseCase {
+  constructor(private readonly repository: IEducationRepository) {}
+
+  async execute(): Promise<EducationModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/education/ListEducationUseCase.ts`. Re-run the same test — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `GetCurrentEducationUseCase`, then implement it**
+
+```typescript
+import { GetCurrentEducationUseCase } from './GetCurrentEducationUseCase';
+import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+import { EducationModel } from '../../domain/models/Education';
+
+describe('GetCurrentEducationUseCase', () => {
+  it('returns only the current education entries', async () => {
+    const entries = [new EducationModel()];
+    const repository: IEducationRepository = {
+      findByOrder: jest.fn(),
+      findCurrent: jest.fn().mockResolvedValue(entries),
+    };
+    const sut = new GetCurrentEducationUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findCurrent).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/education/GetCurrentEducationUseCase.test.ts`. Run it (expect FAIL), then:
+
+```typescript
+import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+import { EducationModel } from '../../domain/models/Education';
+
+export class GetCurrentEducationUseCase {
+  constructor(private readonly repository: IEducationRepository) {}
+
+  async execute(): Promise<EducationModel[]> {
+    return this.repository.findCurrent();
+  }
+}
+```
+Save as `backEnd/src/use-cases/education/GetCurrentEducationUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `GetEducationUseCase`, then implement it**
+
+```typescript
+import { GetEducationUseCase } from './GetEducationUseCase';
+import { IEducationRepository } from '../../domain/interfaces/IEducationRepository';
+import { EducationModel } from '../../domain/models/Education';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface FullEducationRepository extends IEducationRepository {
+  findById(id: string): Promise<EducationModel | null>;
+}
+
+describe('GetEducationUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new EducationModel();
+    const repository = { findById: jest.fn().mockResolvedValue(entry) } as unknown as FullEducationRepository;
+    const sut = new GetEducationUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository = { findById: jest.fn().mockResolvedValue(null) } as unknown as FullEducationRepository;
+    const sut = new GetEducationUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/education/GetEducationUseCase.test.ts`. Run it (expect FAIL), then:
+
+```typescript
+import { EducationModel } from '../../domain/models/Education';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IEducationFinder {
+  findById(id: string): Promise<EducationModel | null>;
+}
+
+export class GetEducationUseCase {
+  constructor(private readonly repository: IEducationFinder) {}
+
+  async execute(id: string): Promise<EducationModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Education not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/education/GetEducationUseCase.ts`. Re-run — expect PASS.
+
+(`findById` lives on `EducationRepository`/`BaseRepository`, not on `IEducationRepository` — that domain interface only declares the resource-specific methods, per the existing convention. `IEducationFinder` is the narrow shape this use-case actually needs, satisfied by `EducationRepository`. The same pattern repeats in `UpdateEducationUseCase` and `DeleteEducationUseCase` below.)
+
+- [ ] **Step 7: Write the failing test for `CreateEducationUseCase`, then implement it**
+
+```typescript
+import { CreateEducationUseCase } from './CreateEducationUseCase';
+import { EducationModel } from '../../domain/models/Education';
+
+interface ICreator {
+  create(data: Partial<EducationModel>): Promise<EducationModel>;
+}
+
+describe('CreateEducationUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new EducationModel();
+    const repository: ICreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateEducationUseCase(repository);
+    const input = { institution: 'MIT', city: 'Cambridge', title: 'BSc', specialization: 'CS', description: 'desc', startDate: '2020-01-01' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/education/CreateEducationUseCase.test.ts`. Run it (expect FAIL), then:
+
+```typescript
+import { EducationModel } from '../../domain/models/Education';
+import { CreateEducationDto } from '../../infrastructure/dto/education/CreateEducationDto';
+
+export interface IEducationCreator {
+  create(data: Partial<EducationModel>): Promise<EducationModel>;
+}
+
+export class CreateEducationUseCase {
+  constructor(private readonly repository: IEducationCreator) {}
+
+  async execute(data: CreateEducationDto): Promise<EducationModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/education/CreateEducationUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Write the failing test for `UpdateEducationUseCase`, then implement it**
+
+```typescript
+import { UpdateEducationUseCase } from './UpdateEducationUseCase';
+import { EducationModel } from '../../domain/models/Education';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IUpdater {
+  update(id: string, data: Partial<EducationModel>): Promise<EducationModel | null>;
+}
+
+describe('UpdateEducationUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new EducationModel();
+    const repository: IUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateEducationUseCase(repository);
+
+    const result = await sut.execute('1', { title: 'New title' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { title: 'New title' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateEducationUseCase(repository);
+
+    await expect(sut.execute('missing', { title: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/education/UpdateEducationUseCase.test.ts`. Run it (expect FAIL), then:
+
+```typescript
+import { EducationModel } from '../../domain/models/Education';
+import { UpdateEducationDto } from '../../infrastructure/dto/education/UpdateEducationDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IEducationUpdater {
+  update(id: string, data: Partial<EducationModel>): Promise<EducationModel | null>;
+}
+
+export class UpdateEducationUseCase {
+  constructor(private readonly repository: IEducationUpdater) {}
+
+  async execute(id: string, data: UpdateEducationDto): Promise<EducationModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Education not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/education/UpdateEducationUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 9: Write the failing test for `DeleteEducationUseCase`, then implement it**
+
+```typescript
+import { DeleteEducationUseCase } from './DeleteEducationUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteEducationUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: IDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteEducationUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteEducationUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/education/DeleteEducationUseCase.test.ts`. Run it (expect FAIL), then:
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IEducationDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteEducationUseCase {
+  constructor(private readonly repository: IEducationDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Education not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/education/DeleteEducationUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 10: Run the full Education test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/education`
+Expected: `Tests: 9 passed, 9 total` (1 List + 1 Current + 2 Get + 1 Create + 2 Update + 2 Delete).
+
+- [ ] **Step 11: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { EducationEntity } from '../entities/EducationEntity';
+import { EducationRepository } from '../repositories/EducationRepository';
+import { ListEducationUseCase } from '../../use-cases/education/ListEducationUseCase';
+import { GetCurrentEducationUseCase } from '../../use-cases/education/GetCurrentEducationUseCase';
+import { GetEducationUseCase } from '../../use-cases/education/GetEducationUseCase';
+import { CreateEducationUseCase } from '../../use-cases/education/CreateEducationUseCase';
+import { UpdateEducationUseCase } from '../../use-cases/education/UpdateEducationUseCase';
+import { DeleteEducationUseCase } from '../../use-cases/education/DeleteEducationUseCase';
+
+const repository = new EducationRepository(AppDataSource.getRepository(EducationEntity));
+const listUseCase = new ListEducationUseCase(repository);
+const currentUseCase = new GetCurrentEducationUseCase(repository);
+const getUseCase = new GetEducationUseCase(repository);
+const createUseCase = new CreateEducationUseCase(repository);
+const updateUseCase = new UpdateEducationUseCase(repository);
+const deleteUseCase = new DeleteEducationUseCase(repository);
+
+export class EducationController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await listUseCase.execute();
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async current(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await currentUseCase.execute();
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await getUseCase.execute(req.params.id);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await createUseCase.execute(req.body);
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await updateUseCase.execute(req.params.id, req.body);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/EducationController.ts`.
+
+- [ ] **Step 12: Implement the route**
+
+Route order matters: `/current` must be registered before `/:id`, or Express will match `GET /education/current` as `GET /education/:id` with `id = "current"`.
+
+```typescript
+import { Router } from 'express';
+import { EducationController } from '../controllers/EducationController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateEducationDto } from '../dto/education/CreateEducationDto';
+import { UpdateEducationDto } from '../dto/education/UpdateEducationDto';
+
+const router = Router();
+
+router.get('/', EducationController.list);
+router.get('/current', EducationController.current);
+router.get('/:id', EducationController.get);
+router.post('/', authMiddleware, validate(CreateEducationDto), EducationController.create);
+router.put('/:id', authMiddleware, validate(UpdateEducationDto), EducationController.update);
+router.delete('/:id', authMiddleware, EducationController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/education.routes.ts`.
+
+- [ ] **Step 13: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/EducationRepository.ts backEnd/src/infrastructure/dto/education/ backEnd/src/use-cases/education/ backEnd/src/infrastructure/controllers/EducationController.ts backEnd/src/infrastructure/routes/education.routes.ts
+git commit -m "Add Education resource (repository, use-cases, controller, route)"
+```
+
+---
+
+### Task 11: Experience resource
+
+Same shape as Task 10 (Education) — `findByOrder` + `findCurrent`, same six use-cases.
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/ExperienceRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/experience/CreateExperienceDto.ts`
+- Create: `backEnd/src/infrastructure/dto/experience/UpdateExperienceDto.ts`
+- Create: `backEnd/src/use-cases/experience/ListExperienceUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/experience/GetCurrentExperienceUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/experience/GetExperienceUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/experience/CreateExperienceUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/experience/UpdateExperienceUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/experience/DeleteExperienceUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/ExperienceController.ts`
+- Create: `backEnd/src/infrastructure/routes/experience.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10.
+- Produces: mounted route prefix `/experience` (Task 21).
+
+- [ ] **Step 1: Implement `ExperienceRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { ExperienceModel } from '../../domain/models/Experience';
+import { ExperienceEntity } from '../entities/ExperienceEntity';
+import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
+
+export class ExperienceRepository
+  extends BaseRepository<ExperienceModel, ExperienceEntity>
+  implements IExperienceRepository
+{
+  constructor(repository: Repository<ExperienceEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: ExperienceEntity): ExperienceModel {
+    const model = new ExperienceModel();
+    model.id = entity.id;
+    model.company = entity.company;
+    model.position = entity.position;
+    model.city = entity.city;
+    model.title = entity.title;
+    model.description = entity.description;
+    model.startDate = entity.startDate;
+    model.endDate = entity.endDate ?? (null as unknown as Date);
+    model.current = entity.current;
+    model.link = entity.link ?? '';
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<ExperienceModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findCurrent(): Promise<ExperienceModel[]> {
+    const entities = await this.repository.find({ where: { current: true }, order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/ExperienceRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsDateString, IsOptional, IsBoolean, IsInt, Min, IsUrl } from 'class-validator';
+
+export class CreateExperienceDto {
+  @IsString()
+  @IsNotEmpty()
+  company!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  position!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  description!: string;
+
+  @IsDateString()
+  startDate!: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  current?: boolean;
+
+  @IsOptional()
+  @IsUrl()
+  link?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/experience/CreateExperienceDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsDateString, IsOptional, IsBoolean, IsInt, Min, IsUrl } from 'class-validator';
+
+export class UpdateExperienceDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  company?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  position?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  description?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  current?: boolean;
+
+  @IsOptional()
+  @IsUrl()
+  link?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/experience/UpdateExperienceDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListExperienceUseCase`, then implement it**
+
+```typescript
+import { ListExperienceUseCase } from './ListExperienceUseCase';
+import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '../../domain/models/Experience';
+
+describe('ListExperienceUseCase', () => {
+  it('returns every experience entry ordered by the repository', async () => {
+    const entries = [new ExperienceModel(), new ExperienceModel()];
+    const repository: IExperienceRepository = {
+      findByOrder: jest.fn().mockResolvedValue(entries),
+      findCurrent: jest.fn(),
+    };
+    const sut = new ListExperienceUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/experience/ListExperienceUseCase.test.ts`. Run: `cd backEnd && npx jest ListExperienceUseCase.test.ts` — expect FAIL (`Cannot find module`).
+
+`backEnd/src/use-cases/experience/ListExperienceUseCase.ts`:
+```typescript
+import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '../../domain/models/Experience';
+
+export class ListExperienceUseCase {
+  constructor(private readonly repository: IExperienceRepository) {}
+
+  async execute(): Promise<ExperienceModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Re-run the same test — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `GetCurrentExperienceUseCase`, then implement it**
+
+```typescript
+import { GetCurrentExperienceUseCase } from './GetCurrentExperienceUseCase';
+import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '../../domain/models/Experience';
+
+describe('GetCurrentExperienceUseCase', () => {
+  it('returns only the current experience entries', async () => {
+    const entries = [new ExperienceModel()];
+    const repository: IExperienceRepository = {
+      findByOrder: jest.fn(),
+      findCurrent: jest.fn().mockResolvedValue(entries),
+    };
+    const sut = new GetCurrentExperienceUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findCurrent).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/experience/GetCurrentExperienceUseCase.test.ts`. Run it — expect FAIL.
+
+`backEnd/src/use-cases/experience/GetCurrentExperienceUseCase.ts`:
+```typescript
+import { IExperienceRepository } from '../../domain/interfaces/IExperienceRepository';
+import { ExperienceModel } from '../../domain/models/Experience';
+
+export class GetCurrentExperienceUseCase {
+  constructor(private readonly repository: IExperienceRepository) {}
+
+  async execute(): Promise<ExperienceModel[]> {
+    return this.repository.findCurrent();
+  }
+}
+```
+Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `GetExperienceUseCase`, then implement it**
+
+```typescript
+import { GetExperienceUseCase } from './GetExperienceUseCase';
+import { ExperienceModel } from '../../domain/models/Experience';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IExperienceFinder {
+  findById(id: string): Promise<ExperienceModel | null>;
+}
+
+describe('GetExperienceUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new ExperienceModel();
+    const repository: IExperienceFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetExperienceUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IExperienceFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetExperienceUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/experience/GetExperienceUseCase.test.ts`. Run it — expect FAIL.
+
+`backEnd/src/use-cases/experience/GetExperienceUseCase.ts`:
+```typescript
+import { ExperienceModel } from '../../domain/models/Experience';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IExperienceFinder {
+  findById(id: string): Promise<ExperienceModel | null>;
+}
+
+export class GetExperienceUseCase {
+  constructor(private readonly repository: IExperienceFinder) {}
+
+  async execute(id: string): Promise<ExperienceModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Experience not found');
+    }
+
+    return entry;
+  }
+}
+```
+Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `CreateExperienceUseCase`, then implement it**
+
+```typescript
+import { CreateExperienceUseCase } from './CreateExperienceUseCase';
+import { ExperienceModel } from '../../domain/models/Experience';
+
+interface IExperienceCreator {
+  create(data: Partial<ExperienceModel>): Promise<ExperienceModel>;
+}
+
+describe('CreateExperienceUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new ExperienceModel();
+    const repository: IExperienceCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateExperienceUseCase(repository);
+    const input = { company: 'Acme', position: 'Dev', city: 'Paris', title: 'Dev', description: 'desc', startDate: '2020-01-01' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/experience/CreateExperienceUseCase.test.ts`. Run it — expect FAIL.
+
+`backEnd/src/use-cases/experience/CreateExperienceUseCase.ts`:
+```typescript
+import { ExperienceModel } from '../../domain/models/Experience';
+import { CreateExperienceDto } from '../../infrastructure/dto/experience/CreateExperienceDto';
+
+export interface IExperienceCreator {
+  create(data: Partial<ExperienceModel>): Promise<ExperienceModel>;
+}
+
+export class CreateExperienceUseCase {
+  constructor(private readonly repository: IExperienceCreator) {}
+
+  async execute(data: CreateExperienceDto): Promise<ExperienceModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `UpdateExperienceUseCase`, then implement it**
+
+```typescript
+import { UpdateExperienceUseCase } from './UpdateExperienceUseCase';
+import { ExperienceModel } from '../../domain/models/Experience';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IExperienceUpdater {
+  update(id: string, data: Partial<ExperienceModel>): Promise<ExperienceModel | null>;
+}
+
+describe('UpdateExperienceUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new ExperienceModel();
+    const repository: IExperienceUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateExperienceUseCase(repository);
+
+    const result = await sut.execute('1', { title: 'New title' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { title: 'New title' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IExperienceUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateExperienceUseCase(repository);
+
+    await expect(sut.execute('missing', { title: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/experience/UpdateExperienceUseCase.test.ts`. Run it — expect FAIL.
+
+`backEnd/src/use-cases/experience/UpdateExperienceUseCase.ts`:
+```typescript
+import { ExperienceModel } from '../../domain/models/Experience';
+import { UpdateExperienceDto } from '../../infrastructure/dto/experience/UpdateExperienceDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IExperienceUpdater {
+  update(id: string, data: Partial<ExperienceModel>): Promise<ExperienceModel | null>;
+}
+
+export class UpdateExperienceUseCase {
+  constructor(private readonly repository: IExperienceUpdater) {}
+
+  async execute(id: string, data: UpdateExperienceDto): Promise<ExperienceModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Experience not found');
+    }
+
+    return updated;
+  }
+}
+```
+Re-run — expect PASS.
+
+- [ ] **Step 8: Write the failing test for `DeleteExperienceUseCase`, then implement it**
+
+```typescript
+import { DeleteExperienceUseCase } from './DeleteExperienceUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IExperienceDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteExperienceUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: IExperienceDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteExperienceUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IExperienceDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteExperienceUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/experience/DeleteExperienceUseCase.test.ts`. Run it — expect FAIL.
+
+`backEnd/src/use-cases/experience/DeleteExperienceUseCase.ts`:
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IExperienceDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteExperienceUseCase {
+  constructor(private readonly repository: IExperienceDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Experience not found');
+    }
+  }
+}
+```
+
+- [ ] **Step 9: Run the full Experience test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/experience`
+Expected: `Tests: 9 passed, 9 total`.
+
+- [ ] **Step 10: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { ExperienceEntity } from '../entities/ExperienceEntity';
+import { ExperienceRepository } from '../repositories/ExperienceRepository';
+import { ListExperienceUseCase } from '../../use-cases/experience/ListExperienceUseCase';
+import { GetCurrentExperienceUseCase } from '../../use-cases/experience/GetCurrentExperienceUseCase';
+import { GetExperienceUseCase } from '../../use-cases/experience/GetExperienceUseCase';
+import { CreateExperienceUseCase } from '../../use-cases/experience/CreateExperienceUseCase';
+import { UpdateExperienceUseCase } from '../../use-cases/experience/UpdateExperienceUseCase';
+import { DeleteExperienceUseCase } from '../../use-cases/experience/DeleteExperienceUseCase';
+
+const repository = new ExperienceRepository(AppDataSource.getRepository(ExperienceEntity));
+const listUseCase = new ListExperienceUseCase(repository);
+const currentUseCase = new GetCurrentExperienceUseCase(repository);
+const getUseCase = new GetExperienceUseCase(repository);
+const createUseCase = new CreateExperienceUseCase(repository);
+const updateUseCase = new UpdateExperienceUseCase(repository);
+const deleteUseCase = new DeleteExperienceUseCase(repository);
+
+export class ExperienceController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await listUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async current(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await currentUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/ExperienceController.ts`.
+
+- [ ] **Step 11: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { ExperienceController } from '../controllers/ExperienceController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateExperienceDto } from '../dto/experience/CreateExperienceDto';
+import { UpdateExperienceDto } from '../dto/experience/UpdateExperienceDto';
+
+const router = Router();
+
+router.get('/', ExperienceController.list);
+router.get('/current', ExperienceController.current);
+router.get('/:id', ExperienceController.get);
+router.post('/', authMiddleware, validate(CreateExperienceDto), ExperienceController.create);
+router.put('/:id', authMiddleware, validate(UpdateExperienceDto), ExperienceController.update);
+router.delete('/:id', authMiddleware, ExperienceController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/experience.routes.ts`.
+
+- [ ] **Step 12: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 13: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/ExperienceRepository.ts backEnd/src/infrastructure/dto/experience/ backEnd/src/use-cases/experience/ backEnd/src/infrastructure/controllers/ExperienceController.ts backEnd/src/infrastructure/routes/experience.routes.ts
+git commit -m "Add Experience resource (repository, use-cases, controller, route)"
+```
+
+---
+
+### Task 12: Project resource
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/ProjectRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/project/CreateProjectDto.ts`
+- Create: `backEnd/src/infrastructure/dto/project/UpdateProjectDto.ts`
+- Create: `backEnd/src/use-cases/project/ListProjectUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/project/ListFeaturedProjectUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/project/GetProjectUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/project/CreateProjectUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/project/UpdateProjectUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/project/DeleteProjectUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/ProjectController.ts`
+- Create: `backEnd/src/infrastructure/routes/project.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10. `ProjectModel.technologies: string[]` (Task 1).
+- Produces: mounted route prefix `/projects` (Task 21).
+
+- [ ] **Step 1: Implement `ProjectRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { ProjectModel } from '../../domain/models/Project';
+import { ProjectEntity } from '../entities/ProjectEntity';
+import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
+
+export class ProjectRepository
+  extends BaseRepository<ProjectModel, ProjectEntity>
+  implements IProjectRepository
+{
+  constructor(repository: Repository<ProjectEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: ProjectEntity): ProjectModel {
+    const model = new ProjectModel();
+    model.id = entity.id;
+    model.title = entity.title;
+    model.description = entity.description;
+    model.longDescription = entity.longDescription ?? '';
+    model.technologies = entity.technologies;
+    model.imageUrl = entity.imageUrl ?? '';
+    model.demoUrl = entity.demoUrl ?? '';
+    model.githubUrl = entity.githubUrl ?? '';
+    model.featured = entity.featured;
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<ProjectModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findFeatured(): Promise<ProjectModel[]> {
+    const entities = await this.repository.find({ where: { featured: true }, order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/ProjectRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsInt, Min, IsUrl, IsArray } from 'class-validator';
+
+export class CreateProjectDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  description!: string;
+
+  @IsOptional()
+  @IsString()
+  longDescription?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  technologies!: string[];
+
+  @IsOptional()
+  @IsUrl()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsUrl()
+  demoUrl?: string;
+
+  @IsOptional()
+  @IsUrl()
+  githubUrl?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  featured?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/project/CreateProjectDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsInt, Min, IsUrl, IsArray } from 'class-validator';
+
+export class UpdateProjectDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  longDescription?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  technologies?: string[];
+
+  @IsOptional()
+  @IsUrl()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsUrl()
+  demoUrl?: string;
+
+  @IsOptional()
+  @IsUrl()
+  githubUrl?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  featured?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/project/UpdateProjectDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListProjectUseCase`, then implement it**
+
+```typescript
+import { ListProjectUseCase } from './ListProjectUseCase';
+import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
+import { ProjectModel } from '../../domain/models/Project';
+
+describe('ListProjectUseCase', () => {
+  it('returns every project ordered by the repository', async () => {
+    const entries = [new ProjectModel(), new ProjectModel()];
+    const repository: IProjectRepository = {
+      findByOrder: jest.fn().mockResolvedValue(entries),
+      findFeatured: jest.fn(),
+    };
+    const sut = new ListProjectUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/project/ListProjectUseCase.test.ts`. Run: `cd backEnd && npx jest ListProjectUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
+import { ProjectModel } from '../../domain/models/Project';
+
+export class ListProjectUseCase {
+  constructor(private readonly repository: IProjectRepository) {}
+
+  async execute(): Promise<ProjectModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/project/ListProjectUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `ListFeaturedProjectUseCase`, then implement it**
+
+```typescript
+import { ListFeaturedProjectUseCase } from './ListFeaturedProjectUseCase';
+import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
+import { ProjectModel } from '../../domain/models/Project';
+
+describe('ListFeaturedProjectUseCase', () => {
+  it('returns only the featured projects', async () => {
+    const entries = [new ProjectModel()];
+    const repository: IProjectRepository = {
+      findByOrder: jest.fn(),
+      findFeatured: jest.fn().mockResolvedValue(entries),
+    };
+    const sut = new ListFeaturedProjectUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findFeatured).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/project/ListFeaturedProjectUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { IProjectRepository } from '../../domain/interfaces/IProjectRepository';
+import { ProjectModel } from '../../domain/models/Project';
+
+export class ListFeaturedProjectUseCase {
+  constructor(private readonly repository: IProjectRepository) {}
+
+  async execute(): Promise<ProjectModel[]> {
+    return this.repository.findFeatured();
+  }
+}
+```
+Save as `backEnd/src/use-cases/project/ListFeaturedProjectUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `GetProjectUseCase`, then implement it**
+
+```typescript
+import { GetProjectUseCase } from './GetProjectUseCase';
+import { ProjectModel } from '../../domain/models/Project';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IProjectFinder {
+  findById(id: string): Promise<ProjectModel | null>;
+}
+
+describe('GetProjectUseCase', () => {
+  it('returns the project when it exists', async () => {
+    const entry = new ProjectModel();
+    const repository: IProjectFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetProjectUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the project does not exist', async () => {
+    const repository: IProjectFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetProjectUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/project/GetProjectUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { ProjectModel } from '../../domain/models/Project';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IProjectFinder {
+  findById(id: string): Promise<ProjectModel | null>;
+}
+
+export class GetProjectUseCase {
+  constructor(private readonly repository: IProjectFinder) {}
+
+  async execute(id: string): Promise<ProjectModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/project/GetProjectUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `CreateProjectUseCase`, then implement it**
+
+```typescript
+import { CreateProjectUseCase } from './CreateProjectUseCase';
+import { ProjectModel } from '../../domain/models/Project';
+
+interface IProjectCreator {
+  create(data: Partial<ProjectModel>): Promise<ProjectModel>;
+}
+
+describe('CreateProjectUseCase', () => {
+  it('creates and returns the new project', async () => {
+    const created = new ProjectModel();
+    const repository: IProjectCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateProjectUseCase(repository);
+    const input = { title: 'Portfolio', description: 'desc', technologies: ['Next.js', 'TypeScript'] };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/project/CreateProjectUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { ProjectModel } from '../../domain/models/Project';
+import { CreateProjectDto } from '../../infrastructure/dto/project/CreateProjectDto';
+
+export interface IProjectCreator {
+  create(data: Partial<ProjectModel>): Promise<ProjectModel>;
+}
+
+export class CreateProjectUseCase {
+  constructor(private readonly repository: IProjectCreator) {}
+
+  async execute(data: CreateProjectDto): Promise<ProjectModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/project/CreateProjectUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `UpdateProjectUseCase`, then implement it**
+
+```typescript
+import { UpdateProjectUseCase } from './UpdateProjectUseCase';
+import { ProjectModel } from '../../domain/models/Project';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IProjectUpdater {
+  update(id: string, data: Partial<ProjectModel>): Promise<ProjectModel | null>;
+}
+
+describe('UpdateProjectUseCase', () => {
+  it('updates and returns the project when it exists', async () => {
+    const updated = new ProjectModel();
+    const repository: IProjectUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateProjectUseCase(repository);
+
+    const result = await sut.execute('1', { title: 'New title' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { title: 'New title' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the project does not exist', async () => {
+    const repository: IProjectUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateProjectUseCase(repository);
+
+    await expect(sut.execute('missing', { title: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/project/UpdateProjectUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { ProjectModel } from '../../domain/models/Project';
+import { UpdateProjectDto } from '../../infrastructure/dto/project/UpdateProjectDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IProjectUpdater {
+  update(id: string, data: Partial<ProjectModel>): Promise<ProjectModel | null>;
+}
+
+export class UpdateProjectUseCase {
+  constructor(private readonly repository: IProjectUpdater) {}
+
+  async execute(id: string, data: UpdateProjectDto): Promise<ProjectModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/project/UpdateProjectUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Write the failing test for `DeleteProjectUseCase`, then implement it**
+
+```typescript
+import { DeleteProjectUseCase } from './DeleteProjectUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IProjectDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteProjectUseCase', () => {
+  it('deletes when the project exists', async () => {
+    const repository: IProjectDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteProjectUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the project does not exist', async () => {
+    const repository: IProjectDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteProjectUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/project/DeleteProjectUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IProjectDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteProjectUseCase {
+  constructor(private readonly repository: IProjectDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Project not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/project/DeleteProjectUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 9: Run the full Project test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/project`
+Expected: `Tests: 9 passed, 9 total`.
+
+- [ ] **Step 10: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { ProjectEntity } from '../entities/ProjectEntity';
+import { ProjectRepository } from '../repositories/ProjectRepository';
+import { ListProjectUseCase } from '../../use-cases/project/ListProjectUseCase';
+import { ListFeaturedProjectUseCase } from '../../use-cases/project/ListFeaturedProjectUseCase';
+import { GetProjectUseCase } from '../../use-cases/project/GetProjectUseCase';
+import { CreateProjectUseCase } from '../../use-cases/project/CreateProjectUseCase';
+import { UpdateProjectUseCase } from '../../use-cases/project/UpdateProjectUseCase';
+import { DeleteProjectUseCase } from '../../use-cases/project/DeleteProjectUseCase';
+
+const repository = new ProjectRepository(AppDataSource.getRepository(ProjectEntity));
+const listUseCase = new ListProjectUseCase(repository);
+const featuredUseCase = new ListFeaturedProjectUseCase(repository);
+const getUseCase = new GetProjectUseCase(repository);
+const createUseCase = new CreateProjectUseCase(repository);
+const updateUseCase = new UpdateProjectUseCase(repository);
+const deleteUseCase = new DeleteProjectUseCase(repository);
+
+export class ProjectController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = req.query.featured === 'true' ? await featuredUseCase.execute() : await listUseCase.execute();
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/ProjectController.ts`.
+
+- [ ] **Step 11: Implement the route**
+
+Per the spec's route table, "featured" is a query param on the list endpoint (`GET /projects?featured=true`), not a separate path — `ProjectController.list` (Step 10) already branches on `req.query.featured`, so there's no extra route to register here, just `GET /`:
+
+```typescript
+import { Router } from 'express';
+import { ProjectController } from '../controllers/ProjectController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateProjectDto } from '../dto/project/CreateProjectDto';
+import { UpdateProjectDto } from '../dto/project/UpdateProjectDto';
+
+const router = Router();
+
+router.get('/', ProjectController.list);
+router.get('/:id', ProjectController.get);
+router.post('/', authMiddleware, validate(CreateProjectDto), ProjectController.create);
+router.put('/:id', authMiddleware, validate(UpdateProjectDto), ProjectController.update);
+router.delete('/:id', authMiddleware, ProjectController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/project.routes.ts`.
+
+- [ ] **Step 12: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 13: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/ProjectRepository.ts backEnd/src/infrastructure/dto/project/ backEnd/src/use-cases/project/ backEnd/src/infrastructure/controllers/ProjectController.ts backEnd/src/infrastructure/routes/project.routes.ts
+git commit -m "Add Project resource (repository, use-cases, controller, route)"
+```
