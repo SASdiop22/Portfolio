@@ -4482,3 +4482,454 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/StrengthRepository.ts backEnd/src/infrastructure/dto/strength/ backEnd/src/use-cases/strength/ backEnd/src/infrastructure/controllers/StrengthController.ts backEnd/src/infrastructure/routes/strength.routes.ts
 git commit -m "Add Strength resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 16: Interest resource
+
+Same simple shape as Task 15 (Strength) — `title`, `description`, `order`, only `findByOrder`, five use-cases.
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/InterestRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/interest/CreateInterestDto.ts`
+- Create: `backEnd/src/infrastructure/dto/interest/UpdateInterestDto.ts`
+- Create: `backEnd/src/use-cases/interest/ListInterestUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/interest/GetInterestUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/interest/CreateInterestUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/interest/UpdateInterestUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/interest/DeleteInterestUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/InterestController.ts`
+- Create: `backEnd/src/infrastructure/routes/interest.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10.
+- Produces: mounted route prefix `/interests` (Task 21).
+
+- [ ] **Step 1: Implement `InterestRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { InterestModel } from '../../domain/models/Interest';
+import { InterestEntity } from '../entities/InterestEntity';
+import { IInterestRepository } from '../../domain/interfaces/IInterestRepository';
+
+export class InterestRepository
+  extends BaseRepository<InterestModel, InterestEntity>
+  implements IInterestRepository
+{
+  constructor(repository: Repository<InterestEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: InterestEntity): InterestModel {
+    const model = new InterestModel();
+    model.id = entity.id;
+    model.title = entity.title;
+    model.description = entity.description;
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<InterestModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/InterestRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class CreateInterestDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  description!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/interest/CreateInterestDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class UpdateInterestDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/interest/UpdateInterestDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListInterestUseCase`, then implement it**
+
+```typescript
+import { ListInterestUseCase } from './ListInterestUseCase';
+import { IInterestRepository } from '../../domain/interfaces/IInterestRepository';
+import { InterestModel } from '../../domain/models/Interest';
+
+describe('ListInterestUseCase', () => {
+  it('returns every interest ordered by the repository', async () => {
+    const entries = [new InterestModel(), new InterestModel()];
+    const repository: IInterestRepository = { findByOrder: jest.fn().mockResolvedValue(entries) };
+    const sut = new ListInterestUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/interest/ListInterestUseCase.test.ts`. Run: `cd backEnd && npx jest ListInterestUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { IInterestRepository } from '../../domain/interfaces/IInterestRepository';
+import { InterestModel } from '../../domain/models/Interest';
+
+export class ListInterestUseCase {
+  constructor(private readonly repository: IInterestRepository) {}
+
+  async execute(): Promise<InterestModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/interest/ListInterestUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `GetInterestUseCase`, then implement it**
+
+```typescript
+import { GetInterestUseCase } from './GetInterestUseCase';
+import { InterestModel } from '../../domain/models/Interest';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IInterestFinder {
+  findById(id: string): Promise<InterestModel | null>;
+}
+
+describe('GetInterestUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new InterestModel();
+    const repository: IInterestFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetInterestUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IInterestFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetInterestUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/interest/GetInterestUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { InterestModel } from '../../domain/models/Interest';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IInterestFinder {
+  findById(id: string): Promise<InterestModel | null>;
+}
+
+export class GetInterestUseCase {
+  constructor(private readonly repository: IInterestFinder) {}
+
+  async execute(id: string): Promise<InterestModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Interest not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/interest/GetInterestUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `CreateInterestUseCase`, then implement it**
+
+```typescript
+import { CreateInterestUseCase } from './CreateInterestUseCase';
+import { InterestModel } from '../../domain/models/Interest';
+
+interface IInterestCreator {
+  create(data: Partial<InterestModel>): Promise<InterestModel>;
+}
+
+describe('CreateInterestUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new InterestModel();
+    const repository: IInterestCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateInterestUseCase(repository);
+    const input = { title: 'Chess', description: 'desc' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/interest/CreateInterestUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { InterestModel } from '../../domain/models/Interest';
+import { CreateInterestDto } from '../../infrastructure/dto/interest/CreateInterestDto';
+
+export interface IInterestCreator {
+  create(data: Partial<InterestModel>): Promise<InterestModel>;
+}
+
+export class CreateInterestUseCase {
+  constructor(private readonly repository: IInterestCreator) {}
+
+  async execute(data: CreateInterestDto): Promise<InterestModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/interest/CreateInterestUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `UpdateInterestUseCase`, then implement it**
+
+```typescript
+import { UpdateInterestUseCase } from './UpdateInterestUseCase';
+import { InterestModel } from '../../domain/models/Interest';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IInterestUpdater {
+  update(id: string, data: Partial<InterestModel>): Promise<InterestModel | null>;
+}
+
+describe('UpdateInterestUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new InterestModel();
+    const repository: IInterestUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateInterestUseCase(repository);
+
+    const result = await sut.execute('1', { title: 'New title' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { title: 'New title' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IInterestUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateInterestUseCase(repository);
+
+    await expect(sut.execute('missing', { title: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/interest/UpdateInterestUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { InterestModel } from '../../domain/models/Interest';
+import { UpdateInterestDto } from '../../infrastructure/dto/interest/UpdateInterestDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IInterestUpdater {
+  update(id: string, data: Partial<InterestModel>): Promise<InterestModel | null>;
+}
+
+export class UpdateInterestUseCase {
+  constructor(private readonly repository: IInterestUpdater) {}
+
+  async execute(id: string, data: UpdateInterestDto): Promise<InterestModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Interest not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/interest/UpdateInterestUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `DeleteInterestUseCase`, then implement it**
+
+```typescript
+import { DeleteInterestUseCase } from './DeleteInterestUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IInterestDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteInterestUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: IInterestDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteInterestUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IInterestDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteInterestUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/interest/DeleteInterestUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IInterestDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteInterestUseCase {
+  constructor(private readonly repository: IInterestDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Interest not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/interest/DeleteInterestUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Run the full Interest test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/interest`
+Expected: `Tests: 7 passed, 7 total`.
+
+- [ ] **Step 9: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { InterestEntity } from '../entities/InterestEntity';
+import { InterestRepository } from '../repositories/InterestRepository';
+import { ListInterestUseCase } from '../../use-cases/interest/ListInterestUseCase';
+import { GetInterestUseCase } from '../../use-cases/interest/GetInterestUseCase';
+import { CreateInterestUseCase } from '../../use-cases/interest/CreateInterestUseCase';
+import { UpdateInterestUseCase } from '../../use-cases/interest/UpdateInterestUseCase';
+import { DeleteInterestUseCase } from '../../use-cases/interest/DeleteInterestUseCase';
+
+const repository = new InterestRepository(AppDataSource.getRepository(InterestEntity));
+const listUseCase = new ListInterestUseCase(repository);
+const getUseCase = new GetInterestUseCase(repository);
+const createUseCase = new CreateInterestUseCase(repository);
+const updateUseCase = new UpdateInterestUseCase(repository);
+const deleteUseCase = new DeleteInterestUseCase(repository);
+
+export class InterestController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await listUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/InterestController.ts`.
+
+- [ ] **Step 10: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { InterestController } from '../controllers/InterestController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateInterestDto } from '../dto/interest/CreateInterestDto';
+import { UpdateInterestDto } from '../dto/interest/UpdateInterestDto';
+
+const router = Router();
+
+router.get('/', InterestController.list);
+router.get('/:id', InterestController.get);
+router.post('/', authMiddleware, validate(CreateInterestDto), InterestController.create);
+router.put('/:id', authMiddleware, validate(UpdateInterestDto), InterestController.update);
+router.delete('/:id', authMiddleware, InterestController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/interest.routes.ts`.
+
+- [ ] **Step 11: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/InterestRepository.ts backEnd/src/infrastructure/dto/interest/ backEnd/src/use-cases/interest/ backEnd/src/infrastructure/controllers/InterestController.ts backEnd/src/infrastructure/routes/interest.routes.ts
+git commit -m "Add Interest resource (repository, use-cases, controller, route)"
+```
