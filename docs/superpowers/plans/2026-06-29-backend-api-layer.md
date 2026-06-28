@@ -5982,3 +5982,429 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/NewsRepository.ts backEnd/src/infrastructure/dto/news/ backEnd/src/use-cases/news/ backEnd/src/infrastructure/controllers/NewsController.ts backEnd/src/infrastructure/routes/news.routes.ts
 git commit -m "Add News resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 19: User resource (profile + photo upload)
+
+Structurally different from every other resource: no list/create/delete, just a profile read/update plus a photo upload. `UserRepository` already exists (Task 8, built early because login needed it) — this task adds the profile/photo use-cases, controller, and route on top of it.
+
+`GET /users/profile` is **public** (no auth), so its use-case can't rely on a JWT-derived user ID — it fetches the one existing user record directly (there's exactly one, the seeded admin). `PUT /users/profile` and `POST /users/photo` are **admin-protected**, so their controller methods read the authenticated user's ID from `req.user!.userId` (set by `authMiddleware`) and pass it to their use-cases.
+
+**Files:**
+- Modify: `backEnd/.env.example` (already has `UPLOAD_PATH`/`MAX_FILE_SIZE` — nothing new needed here, just confirming no changes required)
+- Create: `backEnd/src/infrastructure/dto/user/UpdateUserProfileDto.ts`
+- Create: `backEnd/src/use-cases/user/GetUserProfileUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/user/UpdateUserProfileUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/user/UploadUserPhotoUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/middlewares/upload.middleware.ts`
+- Create: `backEnd/src/infrastructure/controllers/UserController.ts`
+- Create: `backEnd/src/infrastructure/routes/user.routes.ts`
+
+**Interfaces:**
+- Consumes: `UserRepository` (Task 8, via its inherited `BaseRepository.findAll`/`update`), `authMiddleware` (Task 7, for `req.user.userId`), `envConfig.upload` (existing).
+- Produces: mounted route prefix `/users` (Task 21).
+
+- [ ] **Step 1: Create the profile update DTO**
+
+Email and password are intentionally excluded — this endpoint only edits the public-facing profile fields the spec's "Présentation" section covers; changing credentials is out of scope for this plan.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsDateString } from 'class-validator';
+
+export class UpdateUserProfileDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  lastName?: string;
+
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  desiredPosition?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  tagline?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  mobility?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+}
+```
+Save as `backEnd/src/infrastructure/dto/user/UpdateUserProfileDto.ts`.
+
+- [ ] **Step 2: Write the failing test for `GetUserProfileUseCase`, then implement it**
+
+```typescript
+import { GetUserProfileUseCase } from './GetUserProfileUseCase';
+import { UserModel } from '../../domain/models/User';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IUserLister {
+  findAll(): Promise<UserModel[]>;
+}
+
+describe('GetUserProfileUseCase', () => {
+  it('returns the one existing user', async () => {
+    const user = new UserModel();
+    const repository: IUserLister = { findAll: jest.fn().mockResolvedValue([user]) };
+    const sut = new GetUserProfileUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(result).toBe(user);
+  });
+
+  it('throws NotFoundException when no user exists yet', async () => {
+    const repository: IUserLister = { findAll: jest.fn().mockResolvedValue([]) };
+    const sut = new GetUserProfileUseCase(repository);
+
+    await expect(sut.execute()).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/user/GetUserProfileUseCase.test.ts`. Run: `cd backEnd && npx jest GetUserProfileUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { UserModel } from '../../domain/models/User';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IUserLister {
+  findAll(): Promise<UserModel[]>;
+}
+
+export class GetUserProfileUseCase {
+  constructor(private readonly repository: IUserLister) {}
+
+  async execute(): Promise<UserModel> {
+    const users = await this.repository.findAll();
+
+    if (users.length === 0) {
+      throw new NotFoundException('No profile has been set up yet');
+    }
+
+    return users[0];
+  }
+}
+```
+Save as `backEnd/src/use-cases/user/GetUserProfileUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 3: Write the failing test for `UpdateUserProfileUseCase`, then implement it**
+
+```typescript
+import { UpdateUserProfileUseCase } from './UpdateUserProfileUseCase';
+import { UserModel } from '../../domain/models/User';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IUserUpdater {
+  update(id: string, data: Partial<UserModel>): Promise<UserModel | null>;
+}
+
+describe('UpdateUserProfileUseCase', () => {
+  it('updates and returns the user when it exists', async () => {
+    const updated = new UserModel();
+    const repository: IUserUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateUserProfileUseCase(repository);
+
+    const result = await sut.execute('1', { tagline: 'New tagline' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { tagline: 'New tagline' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the user does not exist', async () => {
+    const repository: IUserUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateUserProfileUseCase(repository);
+
+    await expect(sut.execute('missing', { tagline: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/user/UpdateUserProfileUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { UserModel } from '../../domain/models/User';
+import { UpdateUserProfileDto } from '../../infrastructure/dto/user/UpdateUserProfileDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IUserUpdater {
+  update(id: string, data: Partial<UserModel>): Promise<UserModel | null>;
+}
+
+export class UpdateUserProfileUseCase {
+  constructor(private readonly repository: IUserUpdater) {}
+
+  async execute(userId: string, data: UpdateUserProfileDto): Promise<UserModel> {
+    const updated = await this.repository.update(userId, data);
+
+    if (!updated) {
+      throw new NotFoundException('User not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/user/UpdateUserProfileUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `UploadUserPhotoUseCase`, then implement it**
+
+Per the design spec, a previous photo file is deleted from disk after the new one is saved, best-effort (a deletion failure must not fail the request).
+
+```typescript
+import { UploadUserPhotoUseCase } from './UploadUserPhotoUseCase';
+import { UserModel } from '../../domain/models/User';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+import * as fs from 'fs';
+
+jest.mock('fs');
+
+interface IUserPhotoStore {
+  findById(id: string): Promise<UserModel | null>;
+  update(id: string, data: Partial<UserModel>): Promise<UserModel | null>;
+}
+
+function buildUser(photo: string): UserModel {
+  const user = new UserModel();
+  user.photo = photo;
+  return user;
+}
+
+describe('UploadUserPhotoUseCase', () => {
+  it('updates the user photo path and deletes the old file', async () => {
+    const existing = buildUser('/uploads/old.jpg');
+    const updated = buildUser('/uploads/new.jpg');
+    const repository: IUserPhotoStore = {
+      findById: jest.fn().mockResolvedValue(existing),
+      update: jest.fn().mockResolvedValue(updated),
+    };
+    (fs.existsSync as jest.Mock).mockReturnValue(true);
+    (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    const sut = new UploadUserPhotoUseCase(repository, '/uploads');
+
+    const result = await sut.execute('1', 'new.jpg');
+
+    expect(repository.update).toHaveBeenCalledWith('1', { photo: '/uploads/new.jpg' });
+    expect(fs.unlinkSync).toHaveBeenCalled();
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the user does not exist', async () => {
+    const repository: IUserPhotoStore = {
+      findById: jest.fn().mockResolvedValue(null),
+      update: jest.fn(),
+    };
+    const sut = new UploadUserPhotoUseCase(repository, '/uploads');
+
+    await expect(sut.execute('missing', 'new.jpg')).rejects.toThrow(NotFoundException);
+  });
+
+  it('does not throw when deleting the old photo fails', async () => {
+    const existing = buildUser('/uploads/old.jpg');
+    const updated = buildUser('/uploads/new.jpg');
+    const repository: IUserPhotoStore = {
+      findById: jest.fn().mockResolvedValue(existing),
+      update: jest.fn().mockResolvedValue(updated),
+    };
+    (fs.existsSync as jest.Mock).mockReturnValue(true);
+    (fs.unlinkSync as jest.Mock).mockImplementation(() => {
+      throw new Error('disk error');
+    });
+    const sut = new UploadUserPhotoUseCase(repository, '/uploads');
+
+    const result = await sut.execute('1', 'new.jpg');
+
+    expect(result).toBe(updated);
+  });
+});
+```
+Save as `backEnd/src/use-cases/user/UploadUserPhotoUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import * as fs from 'fs';
+import * as path from 'path';
+import { UserModel } from '../../domain/models/User';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IUserPhotoStore {
+  findById(id: string): Promise<UserModel | null>;
+  update(id: string, data: Partial<UserModel>): Promise<UserModel | null>;
+}
+
+export class UploadUserPhotoUseCase {
+  constructor(
+    private readonly repository: IUserPhotoStore,
+    private readonly uploadPath: string,
+  ) {}
+
+  async execute(userId: string, filename: string): Promise<UserModel> {
+    const existing = await this.repository.findById(userId);
+
+    if (!existing) {
+      throw new NotFoundException('User not found');
+    }
+
+    const newPhotoPath = `/uploads/${filename}`;
+    const updated = await this.repository.update(userId, { photo: newPhotoPath });
+
+    if (!updated) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (existing.photo) {
+      const oldFilePath = path.join(this.uploadPath, path.basename(existing.photo));
+      try {
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      } catch {
+        // Best-effort cleanup — a failure to delete the old file must not fail the request.
+      }
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/user/UploadUserPhotoUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Run the full User test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/user`
+Expected: `Tests: 7 passed, 7 total`.
+
+- [ ] **Step 6: Implement the upload middleware**
+
+```typescript
+import multer from 'multer';
+import path from 'path';
+import { Request } from 'express';
+import { envConfig } from '../../config/env.config';
+
+const storage = multer.diskStorage({
+  destination: (req, file, callback) => {
+    callback(null, envConfig.upload.uploadPath);
+  },
+  filename: (req: Request, file, callback) => {
+    const userId = req.user?.userId ?? 'unknown';
+    const extension = path.extname(file.originalname);
+    callback(null, `${userId}-${Date.now()}${extension}`);
+  },
+});
+
+function fileFilter(req: Request, file: Express.Multer.File, callback: multer.FileFilterCallback): void {
+  const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+
+  if (allowed.includes(file.mimetype)) {
+    callback(null, true);
+    return;
+  }
+
+  callback(new Error('Only JPEG, PNG, or WEBP images are allowed'));
+}
+
+export const uploadUserPhoto = multer({
+  storage,
+  limits: { fileSize: envConfig.upload.maxFileSize },
+  fileFilter,
+});
+```
+Save as `backEnd/src/infrastructure/middlewares/upload.middleware.ts`.
+
+- [ ] **Step 7: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { UserEntity } from '../entities/UserEntity';
+import { UserRepository } from '../repositories/UserRepository';
+import { GetUserProfileUseCase } from '../../use-cases/user/GetUserProfileUseCase';
+import { UpdateUserProfileUseCase } from '../../use-cases/user/UpdateUserProfileUseCase';
+import { UploadUserPhotoUseCase } from '../../use-cases/user/UploadUserPhotoUseCase';
+import { envConfig } from '../../config/env.config';
+
+const repository = new UserRepository(AppDataSource.getRepository(UserEntity));
+const getProfileUseCase = new GetUserProfileUseCase(repository);
+const updateProfileUseCase = new UpdateUserProfileUseCase(repository);
+const uploadPhotoUseCase = new UploadUserPhotoUseCase(repository, envConfig.upload.uploadPath);
+
+export class UserController {
+  static async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getProfileUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await updateProfileUseCase.execute(req.user!.userId, req.body);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async uploadPhoto(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await uploadPhotoUseCase.execute(req.user!.userId, req.file!.filename);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/UserController.ts`.
+
+- [ ] **Step 8: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { UserController } from '../controllers/UserController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { uploadUserPhoto } from '../middlewares/upload.middleware';
+import { UpdateUserProfileDto } from '../dto/user/UpdateUserProfileDto';
+
+const router = Router();
+
+router.get('/profile', UserController.getProfile);
+router.put('/profile', authMiddleware, validate(UpdateUserProfileDto), UserController.updateProfile);
+router.post('/photo', authMiddleware, uploadUserPhoto.single('photo'), UserController.uploadPhoto);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/user.routes.ts`.
+
+- [ ] **Step 9: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add backEnd/src/infrastructure/dto/user/ backEnd/src/use-cases/user/ backEnd/src/infrastructure/middlewares/upload.middleware.ts backEnd/src/infrastructure/controllers/UserController.ts backEnd/src/infrastructure/routes/user.routes.ts
+git commit -m "Add User profile and photo upload (use-cases, controller, route)"
+```
