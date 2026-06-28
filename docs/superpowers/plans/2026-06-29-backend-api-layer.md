@@ -2992,3 +2992,584 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/ProjectRepository.ts backEnd/src/infrastructure/dto/project/ backEnd/src/use-cases/project/ backEnd/src/infrastructure/controllers/ProjectController.ts backEnd/src/infrastructure/routes/project.routes.ts
 git commit -m "Add Project resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 13: Skill resource
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/SkillRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/skill/CreateSkillDto.ts`
+- Create: `backEnd/src/infrastructure/dto/skill/UpdateSkillDto.ts`
+- Create: `backEnd/src/use-cases/skill/ListSkillUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/skill/ListSkillByCategoryUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/skill/ListSkillCategoriesUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/skill/GetSkillUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/skill/CreateSkillUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/skill/UpdateSkillUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/skill/DeleteSkillUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/SkillController.ts`
+- Create: `backEnd/src/infrastructure/routes/skill.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10. `SkillModel.level: number`, `SkillModel.icon: string` (Task 1).
+- Produces: mounted route prefix `/skills` (Task 21).
+
+- [ ] **Step 1: Implement `SkillRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { SkillModel } from '../../domain/models/Skill';
+import { SkillEntity } from '../entities/SkillEntity';
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+
+export class SkillRepository extends BaseRepository<SkillModel, SkillEntity> implements ISkillRepository {
+  constructor(repository: Repository<SkillEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: SkillEntity): SkillModel {
+    const model = new SkillModel();
+    model.id = entity.id;
+    model.title = entity.title;
+    model.category = entity.category;
+    model.level = entity.level ?? 0;
+    model.icon = entity.icon ?? '';
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<SkillModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findByCategory(category: string): Promise<SkillModel[]> {
+    const entities = await this.repository.find({ where: { category }, order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+
+  async findAllCategories(): Promise<string[]> {
+    const rows = await this.repository
+      .createQueryBuilder('skill')
+      .select('DISTINCT skill.category', 'category')
+      .getRawMany<{ category: string }>();
+    return rows.map((row) => row.category);
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/SkillRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min, Max } from 'class-validator';
+
+export class CreateSkillDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  category!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  level?: number;
+
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/skill/CreateSkillDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min, Max } from 'class-validator';
+
+export class UpdateSkillDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  category?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  level?: number;
+
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/skill/UpdateSkillDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListSkillUseCase`, then implement it**
+
+```typescript
+import { ListSkillUseCase } from './ListSkillUseCase';
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { SkillModel } from '../../domain/models/Skill';
+
+describe('ListSkillUseCase', () => {
+  it('returns every skill ordered by the repository', async () => {
+    const entries = [new SkillModel(), new SkillModel()];
+    const repository: ISkillRepository = {
+      findByOrder: jest.fn().mockResolvedValue(entries),
+      findByCategory: jest.fn(),
+      findAllCategories: jest.fn(),
+    };
+    const sut = new ListSkillUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/ListSkillUseCase.test.ts`. Run: `cd backEnd && npx jest ListSkillUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { SkillModel } from '../../domain/models/Skill';
+
+export class ListSkillUseCase {
+  constructor(private readonly repository: ISkillRepository) {}
+
+  async execute(): Promise<SkillModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/ListSkillUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `ListSkillByCategoryUseCase`, then implement it**
+
+```typescript
+import { ListSkillByCategoryUseCase } from './ListSkillByCategoryUseCase';
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { SkillModel } from '../../domain/models/Skill';
+
+describe('ListSkillByCategoryUseCase', () => {
+  it('returns skills filtered by category', async () => {
+    const entries = [new SkillModel()];
+    const repository: ISkillRepository = {
+      findByOrder: jest.fn(),
+      findByCategory: jest.fn().mockResolvedValue(entries),
+      findAllCategories: jest.fn(),
+    };
+    const sut = new ListSkillByCategoryUseCase(repository);
+
+    const result = await sut.execute('tools');
+
+    expect(repository.findByCategory).toHaveBeenCalledWith('tools');
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/ListSkillByCategoryUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+import { SkillModel } from '../../domain/models/Skill';
+
+export class ListSkillByCategoryUseCase {
+  constructor(private readonly repository: ISkillRepository) {}
+
+  async execute(category: string): Promise<SkillModel[]> {
+    return this.repository.findByCategory(category);
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/ListSkillByCategoryUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `ListSkillCategoriesUseCase`, then implement it**
+
+```typescript
+import { ListSkillCategoriesUseCase } from './ListSkillCategoriesUseCase';
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+
+describe('ListSkillCategoriesUseCase', () => {
+  it('returns the distinct category list', async () => {
+    const repository: ISkillRepository = {
+      findByOrder: jest.fn(),
+      findByCategory: jest.fn(),
+      findAllCategories: jest.fn().mockResolvedValue(['technical', 'tools']),
+    };
+    const sut = new ListSkillCategoriesUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findAllCategories).toHaveBeenCalled();
+    expect(result).toEqual(['technical', 'tools']);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/ListSkillCategoriesUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { ISkillRepository } from '../../domain/interfaces/ISkillRepository';
+
+export class ListSkillCategoriesUseCase {
+  constructor(private readonly repository: ISkillRepository) {}
+
+  async execute(): Promise<string[]> {
+    return this.repository.findAllCategories();
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/ListSkillCategoriesUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `GetSkillUseCase`, then implement it**
+
+```typescript
+import { GetSkillUseCase } from './GetSkillUseCase';
+import { SkillModel } from '../../domain/models/Skill';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ISkillFinder {
+  findById(id: string): Promise<SkillModel | null>;
+}
+
+describe('GetSkillUseCase', () => {
+  it('returns the skill when it exists', async () => {
+    const entry = new SkillModel();
+    const repository: ISkillFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetSkillUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the skill does not exist', async () => {
+    const repository: ISkillFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetSkillUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/GetSkillUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { SkillModel } from '../../domain/models/Skill';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ISkillFinder {
+  findById(id: string): Promise<SkillModel | null>;
+}
+
+export class GetSkillUseCase {
+  constructor(private readonly repository: ISkillFinder) {}
+
+  async execute(id: string): Promise<SkillModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Skill not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/GetSkillUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `CreateSkillUseCase`, then implement it**
+
+```typescript
+import { CreateSkillUseCase } from './CreateSkillUseCase';
+import { SkillModel } from '../../domain/models/Skill';
+
+interface ISkillCreator {
+  create(data: Partial<SkillModel>): Promise<SkillModel>;
+}
+
+describe('CreateSkillUseCase', () => {
+  it('creates and returns the new skill', async () => {
+    const created = new SkillModel();
+    const repository: ISkillCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateSkillUseCase(repository);
+    const input = { title: 'TypeScript', category: 'technical' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/CreateSkillUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { SkillModel } from '../../domain/models/Skill';
+import { CreateSkillDto } from '../../infrastructure/dto/skill/CreateSkillDto';
+
+export interface ISkillCreator {
+  create(data: Partial<SkillModel>): Promise<SkillModel>;
+}
+
+export class CreateSkillUseCase {
+  constructor(private readonly repository: ISkillCreator) {}
+
+  async execute(data: CreateSkillDto): Promise<SkillModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/CreateSkillUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Write the failing test for `UpdateSkillUseCase`, then implement it**
+
+```typescript
+import { UpdateSkillUseCase } from './UpdateSkillUseCase';
+import { SkillModel } from '../../domain/models/Skill';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ISkillUpdater {
+  update(id: string, data: Partial<SkillModel>): Promise<SkillModel | null>;
+}
+
+describe('UpdateSkillUseCase', () => {
+  it('updates and returns the skill when it exists', async () => {
+    const updated = new SkillModel();
+    const repository: ISkillUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateSkillUseCase(repository);
+
+    const result = await sut.execute('1', { level: 80 });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { level: 80 });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the skill does not exist', async () => {
+    const repository: ISkillUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateSkillUseCase(repository);
+
+    await expect(sut.execute('missing', { level: 50 })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/UpdateSkillUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { SkillModel } from '../../domain/models/Skill';
+import { UpdateSkillDto } from '../../infrastructure/dto/skill/UpdateSkillDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ISkillUpdater {
+  update(id: string, data: Partial<SkillModel>): Promise<SkillModel | null>;
+}
+
+export class UpdateSkillUseCase {
+  constructor(private readonly repository: ISkillUpdater) {}
+
+  async execute(id: string, data: UpdateSkillDto): Promise<SkillModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Skill not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/UpdateSkillUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 9: Write the failing test for `DeleteSkillUseCase`, then implement it**
+
+```typescript
+import { DeleteSkillUseCase } from './DeleteSkillUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ISkillDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteSkillUseCase', () => {
+  it('deletes when the skill exists', async () => {
+    const repository: ISkillDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteSkillUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the skill does not exist', async () => {
+    const repository: ISkillDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteSkillUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/skill/DeleteSkillUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ISkillDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteSkillUseCase {
+  constructor(private readonly repository: ISkillDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Skill not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/skill/DeleteSkillUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 10: Run the full Skill test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/skill`
+Expected: `Tests: 10 passed, 10 total`.
+
+- [ ] **Step 11: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { SkillEntity } from '../entities/SkillEntity';
+import { SkillRepository } from '../repositories/SkillRepository';
+import { ListSkillUseCase } from '../../use-cases/skill/ListSkillUseCase';
+import { ListSkillByCategoryUseCase } from '../../use-cases/skill/ListSkillByCategoryUseCase';
+import { ListSkillCategoriesUseCase } from '../../use-cases/skill/ListSkillCategoriesUseCase';
+import { GetSkillUseCase } from '../../use-cases/skill/GetSkillUseCase';
+import { CreateSkillUseCase } from '../../use-cases/skill/CreateSkillUseCase';
+import { UpdateSkillUseCase } from '../../use-cases/skill/UpdateSkillUseCase';
+import { DeleteSkillUseCase } from '../../use-cases/skill/DeleteSkillUseCase';
+
+const repository = new SkillRepository(AppDataSource.getRepository(SkillEntity));
+const listUseCase = new ListSkillUseCase(repository);
+const byCategoryUseCase = new ListSkillByCategoryUseCase(repository);
+const categoriesUseCase = new ListSkillCategoriesUseCase(repository);
+const getUseCase = new GetSkillUseCase(repository);
+const createUseCase = new CreateSkillUseCase(repository);
+const updateUseCase = new UpdateSkillUseCase(repository);
+const deleteUseCase = new DeleteSkillUseCase(repository);
+
+export class SkillController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+      const result = category ? await byCategoryUseCase.execute(category) : await listUseCase.execute();
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async categories(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await categoriesUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/SkillController.ts`.
+
+- [ ] **Step 12: Implement the route**
+
+`/categories` is a fixed path and must be registered before `/:id`:
+
+```typescript
+import { Router } from 'express';
+import { SkillController } from '../controllers/SkillController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateSkillDto } from '../dto/skill/CreateSkillDto';
+import { UpdateSkillDto } from '../dto/skill/UpdateSkillDto';
+
+const router = Router();
+
+router.get('/', SkillController.list);
+router.get('/categories', SkillController.categories);
+router.get('/:id', SkillController.get);
+router.post('/', authMiddleware, validate(CreateSkillDto), SkillController.create);
+router.put('/:id', authMiddleware, validate(UpdateSkillDto), SkillController.update);
+router.delete('/:id', authMiddleware, SkillController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/skill.routes.ts`.
+
+- [ ] **Step 13: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/SkillRepository.ts backEnd/src/infrastructure/dto/skill/ backEnd/src/use-cases/skill/ backEnd/src/infrastructure/controllers/SkillController.ts backEnd/src/infrastructure/routes/skill.routes.ts
+git commit -m "Add Skill resource (repository, use-cases, controller, route)"
+```
