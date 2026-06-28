@@ -1,5 +1,4 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
 import { envConfig } from './env.config';
 
 export const databaseConfig = {
