@@ -4933,3 +4933,454 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/InterestRepository.ts backEnd/src/infrastructure/dto/interest/ backEnd/src/use-cases/interest/ backEnd/src/infrastructure/controllers/InterestController.ts backEnd/src/infrastructure/routes/interest.routes.ts
 git commit -m "Add Interest resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 17: Language resource
+
+Same simple shape as Task 15/16 — `title`, `level` (string, e.g. "native"/"fluent"), `order`, only `findByOrder`, five use-cases.
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/LanguageRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/language/CreateLanguageDto.ts`
+- Create: `backEnd/src/infrastructure/dto/language/UpdateLanguageDto.ts`
+- Create: `backEnd/src/use-cases/language/ListLanguageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/language/GetLanguageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/language/CreateLanguageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/language/UpdateLanguageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/language/DeleteLanguageUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/LanguageController.ts`
+- Create: `backEnd/src/infrastructure/routes/language.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10.
+- Produces: mounted route prefix `/languages` (Task 21).
+
+- [ ] **Step 1: Implement `LanguageRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { LanguageModel } from '../../domain/models/Language';
+import { LanguageEntity } from '../entities/LanguageEntity';
+import { ILanguageRepository } from '../../domain/interfaces/ILanguageRepository';
+
+export class LanguageRepository
+  extends BaseRepository<LanguageModel, LanguageEntity>
+  implements ILanguageRepository
+{
+  constructor(repository: Repository<LanguageEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: LanguageEntity): LanguageModel {
+    const model = new LanguageModel();
+    model.id = entity.id;
+    model.title = entity.title;
+    model.level = entity.level;
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<LanguageModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/LanguageRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class CreateLanguageDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  level!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/language/CreateLanguageDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class UpdateLanguageDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  level?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/language/UpdateLanguageDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListLanguageUseCase`, then implement it**
+
+```typescript
+import { ListLanguageUseCase } from './ListLanguageUseCase';
+import { ILanguageRepository } from '../../domain/interfaces/ILanguageRepository';
+import { LanguageModel } from '../../domain/models/Language';
+
+describe('ListLanguageUseCase', () => {
+  it('returns every language ordered by the repository', async () => {
+    const entries = [new LanguageModel(), new LanguageModel()];
+    const repository: ILanguageRepository = { findByOrder: jest.fn().mockResolvedValue(entries) };
+    const sut = new ListLanguageUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/language/ListLanguageUseCase.test.ts`. Run: `cd backEnd && npx jest ListLanguageUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { ILanguageRepository } from '../../domain/interfaces/ILanguageRepository';
+import { LanguageModel } from '../../domain/models/Language';
+
+export class ListLanguageUseCase {
+  constructor(private readonly repository: ILanguageRepository) {}
+
+  async execute(): Promise<LanguageModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/language/ListLanguageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `GetLanguageUseCase`, then implement it**
+
+```typescript
+import { GetLanguageUseCase } from './GetLanguageUseCase';
+import { LanguageModel } from '../../domain/models/Language';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ILanguageFinder {
+  findById(id: string): Promise<LanguageModel | null>;
+}
+
+describe('GetLanguageUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new LanguageModel();
+    const repository: ILanguageFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetLanguageUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: ILanguageFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetLanguageUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/language/GetLanguageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { LanguageModel } from '../../domain/models/Language';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ILanguageFinder {
+  findById(id: string): Promise<LanguageModel | null>;
+}
+
+export class GetLanguageUseCase {
+  constructor(private readonly repository: ILanguageFinder) {}
+
+  async execute(id: string): Promise<LanguageModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Language not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/language/GetLanguageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `CreateLanguageUseCase`, then implement it**
+
+```typescript
+import { CreateLanguageUseCase } from './CreateLanguageUseCase';
+import { LanguageModel } from '../../domain/models/Language';
+
+interface ILanguageCreator {
+  create(data: Partial<LanguageModel>): Promise<LanguageModel>;
+}
+
+describe('CreateLanguageUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new LanguageModel();
+    const repository: ILanguageCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateLanguageUseCase(repository);
+    const input = { title: 'English', level: 'fluent' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/language/CreateLanguageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { LanguageModel } from '../../domain/models/Language';
+import { CreateLanguageDto } from '../../infrastructure/dto/language/CreateLanguageDto';
+
+export interface ILanguageCreator {
+  create(data: Partial<LanguageModel>): Promise<LanguageModel>;
+}
+
+export class CreateLanguageUseCase {
+  constructor(private readonly repository: ILanguageCreator) {}
+
+  async execute(data: CreateLanguageDto): Promise<LanguageModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/language/CreateLanguageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `UpdateLanguageUseCase`, then implement it**
+
+```typescript
+import { UpdateLanguageUseCase } from './UpdateLanguageUseCase';
+import { LanguageModel } from '../../domain/models/Language';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ILanguageUpdater {
+  update(id: string, data: Partial<LanguageModel>): Promise<LanguageModel | null>;
+}
+
+describe('UpdateLanguageUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new LanguageModel();
+    const repository: ILanguageUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateLanguageUseCase(repository);
+
+    const result = await sut.execute('1', { level: 'native' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { level: 'native' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: ILanguageUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateLanguageUseCase(repository);
+
+    await expect(sut.execute('missing', { level: 'native' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/language/UpdateLanguageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { LanguageModel } from '../../domain/models/Language';
+import { UpdateLanguageDto } from '../../infrastructure/dto/language/UpdateLanguageDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ILanguageUpdater {
+  update(id: string, data: Partial<LanguageModel>): Promise<LanguageModel | null>;
+}
+
+export class UpdateLanguageUseCase {
+  constructor(private readonly repository: ILanguageUpdater) {}
+
+  async execute(id: string, data: UpdateLanguageDto): Promise<LanguageModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Language not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/language/UpdateLanguageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `DeleteLanguageUseCase`, then implement it**
+
+```typescript
+import { DeleteLanguageUseCase } from './DeleteLanguageUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface ILanguageDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteLanguageUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: ILanguageDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteLanguageUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: ILanguageDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteLanguageUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/language/DeleteLanguageUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface ILanguageDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteLanguageUseCase {
+  constructor(private readonly repository: ILanguageDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Language not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/language/DeleteLanguageUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Run the full Language test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/language`
+Expected: `Tests: 7 passed, 7 total`.
+
+- [ ] **Step 9: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { LanguageEntity } from '../entities/LanguageEntity';
+import { LanguageRepository } from '../repositories/LanguageRepository';
+import { ListLanguageUseCase } from '../../use-cases/language/ListLanguageUseCase';
+import { GetLanguageUseCase } from '../../use-cases/language/GetLanguageUseCase';
+import { CreateLanguageUseCase } from '../../use-cases/language/CreateLanguageUseCase';
+import { UpdateLanguageUseCase } from '../../use-cases/language/UpdateLanguageUseCase';
+import { DeleteLanguageUseCase } from '../../use-cases/language/DeleteLanguageUseCase';
+
+const repository = new LanguageRepository(AppDataSource.getRepository(LanguageEntity));
+const listUseCase = new ListLanguageUseCase(repository);
+const getUseCase = new GetLanguageUseCase(repository);
+const createUseCase = new CreateLanguageUseCase(repository);
+const updateUseCase = new UpdateLanguageUseCase(repository);
+const deleteUseCase = new DeleteLanguageUseCase(repository);
+
+export class LanguageController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await listUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/LanguageController.ts`.
+
+- [ ] **Step 10: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { LanguageController } from '../controllers/LanguageController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateLanguageDto } from '../dto/language/CreateLanguageDto';
+import { UpdateLanguageDto } from '../dto/language/UpdateLanguageDto';
+
+const router = Router();
+
+router.get('/', LanguageController.list);
+router.get('/:id', LanguageController.get);
+router.post('/', authMiddleware, validate(CreateLanguageDto), LanguageController.create);
+router.put('/:id', authMiddleware, validate(UpdateLanguageDto), LanguageController.update);
+router.delete('/:id', authMiddleware, LanguageController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/language.routes.ts`.
+
+- [ ] **Step 11: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/LanguageRepository.ts backEnd/src/infrastructure/dto/language/ backEnd/src/use-cases/language/ backEnd/src/infrastructure/controllers/LanguageController.ts backEnd/src/infrastructure/routes/language.routes.ts
+git commit -m "Add Language resource (repository, use-cases, controller, route)"
+```
