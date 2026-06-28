@@ -4031,3 +4031,454 @@ Expected: no errors.
 git add backEnd/src/infrastructure/repositories/SocialLinkRepository.ts backEnd/src/infrastructure/dto/social-link/ backEnd/src/use-cases/social-link/ backEnd/src/infrastructure/controllers/SocialLinkController.ts backEnd/src/infrastructure/routes/social-link.routes.ts
 git commit -m "Add SocialLink resource (repository, use-cases, controller, route)"
 ```
+
+---
+
+### Task 15: Strength resource
+
+Same simple shape as Task 14 (SocialLink) — only `findByOrder`, five use-cases.
+
+**Files:**
+- Create: `backEnd/src/infrastructure/repositories/StrengthRepository.ts`
+- Create: `backEnd/src/infrastructure/dto/strength/CreateStrengthDto.ts`
+- Create: `backEnd/src/infrastructure/dto/strength/UpdateStrengthDto.ts`
+- Create: `backEnd/src/use-cases/strength/ListStrengthUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/strength/GetStrengthUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/strength/CreateStrengthUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/strength/UpdateStrengthUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/use-cases/strength/DeleteStrengthUseCase.ts` (+ `.test.ts`)
+- Create: `backEnd/src/infrastructure/controllers/StrengthController.ts`
+- Create: `backEnd/src/infrastructure/routes/strength.routes.ts`
+
+**Interfaces:**
+- Consumes: same shared pieces as Task 10.
+- Produces: mounted route prefix `/strengths` (Task 21).
+
+- [ ] **Step 1: Implement `StrengthRepository`**
+
+```typescript
+import { Repository } from 'typeorm';
+import { BaseRepository } from './BaseRepository';
+import { StrengthModel } from '../../domain/models/Strength';
+import { StrengthEntity } from '../entities/StrengthEntity';
+import { IStrengthRepository } from '../../domain/interfaces/IStrengthRepository';
+
+export class StrengthRepository
+  extends BaseRepository<StrengthModel, StrengthEntity>
+  implements IStrengthRepository
+{
+  constructor(repository: Repository<StrengthEntity>) {
+    super(repository);
+  }
+
+  protected toModel(entity: StrengthEntity): StrengthModel {
+    const model = new StrengthModel();
+    model.id = entity.id;
+    model.title = entity.title;
+    model.description = entity.description;
+    model.order = entity.order;
+    model.createdAt = entity.createdAt;
+    model.updatedAt = entity.updatedAt;
+    return model;
+  }
+
+  async findByOrder(): Promise<StrengthModel[]> {
+    const entities = await this.repository.find({ order: { order: 'ASC' } });
+    return entities.map((entity) => this.toModel(entity));
+  }
+}
+```
+Save as `backEnd/src/infrastructure/repositories/StrengthRepository.ts`.
+
+- [ ] **Step 2: Create the DTOs**
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class CreateStrengthDto {
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  description!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/strength/CreateStrengthDto.ts`.
+
+```typescript
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class UpdateStrengthDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  order?: number;
+}
+```
+Save as `backEnd/src/infrastructure/dto/strength/UpdateStrengthDto.ts`.
+
+- [ ] **Step 3: Write the failing test for `ListStrengthUseCase`, then implement it**
+
+```typescript
+import { ListStrengthUseCase } from './ListStrengthUseCase';
+import { IStrengthRepository } from '../../domain/interfaces/IStrengthRepository';
+import { StrengthModel } from '../../domain/models/Strength';
+
+describe('ListStrengthUseCase', () => {
+  it('returns every strength ordered by the repository', async () => {
+    const entries = [new StrengthModel(), new StrengthModel()];
+    const repository: IStrengthRepository = { findByOrder: jest.fn().mockResolvedValue(entries) };
+    const sut = new ListStrengthUseCase(repository);
+
+    const result = await sut.execute();
+
+    expect(repository.findByOrder).toHaveBeenCalled();
+    expect(result).toBe(entries);
+  });
+});
+```
+Save as `backEnd/src/use-cases/strength/ListStrengthUseCase.test.ts`. Run: `cd backEnd && npx jest ListStrengthUseCase.test.ts` — expect FAIL.
+
+```typescript
+import { IStrengthRepository } from '../../domain/interfaces/IStrengthRepository';
+import { StrengthModel } from '../../domain/models/Strength';
+
+export class ListStrengthUseCase {
+  constructor(private readonly repository: IStrengthRepository) {}
+
+  async execute(): Promise<StrengthModel[]> {
+    return this.repository.findByOrder();
+  }
+}
+```
+Save as `backEnd/src/use-cases/strength/ListStrengthUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 4: Write the failing test for `GetStrengthUseCase`, then implement it**
+
+```typescript
+import { GetStrengthUseCase } from './GetStrengthUseCase';
+import { StrengthModel } from '../../domain/models/Strength';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IStrengthFinder {
+  findById(id: string): Promise<StrengthModel | null>;
+}
+
+describe('GetStrengthUseCase', () => {
+  it('returns the entry when it exists', async () => {
+    const entry = new StrengthModel();
+    const repository: IStrengthFinder = { findById: jest.fn().mockResolvedValue(entry) };
+    const sut = new GetStrengthUseCase(repository);
+
+    const result = await sut.execute('1');
+
+    expect(result).toBe(entry);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IStrengthFinder = { findById: jest.fn().mockResolvedValue(null) };
+    const sut = new GetStrengthUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/strength/GetStrengthUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { StrengthModel } from '../../domain/models/Strength';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IStrengthFinder {
+  findById(id: string): Promise<StrengthModel | null>;
+}
+
+export class GetStrengthUseCase {
+  constructor(private readonly repository: IStrengthFinder) {}
+
+  async execute(id: string): Promise<StrengthModel> {
+    const entry = await this.repository.findById(id);
+
+    if (!entry) {
+      throw new NotFoundException('Strength not found');
+    }
+
+    return entry;
+  }
+}
+```
+Save as `backEnd/src/use-cases/strength/GetStrengthUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 5: Write the failing test for `CreateStrengthUseCase`, then implement it**
+
+```typescript
+import { CreateStrengthUseCase } from './CreateStrengthUseCase';
+import { StrengthModel } from '../../domain/models/Strength';
+
+interface IStrengthCreator {
+  create(data: Partial<StrengthModel>): Promise<StrengthModel>;
+}
+
+describe('CreateStrengthUseCase', () => {
+  it('creates and returns the new entry', async () => {
+    const created = new StrengthModel();
+    const repository: IStrengthCreator = { create: jest.fn().mockResolvedValue(created) };
+    const sut = new CreateStrengthUseCase(repository);
+    const input = { title: 'Adaptability', description: 'desc' };
+
+    const result = await sut.execute(input);
+
+    expect(repository.create).toHaveBeenCalledWith(input);
+    expect(result).toBe(created);
+  });
+});
+```
+Save as `backEnd/src/use-cases/strength/CreateStrengthUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { StrengthModel } from '../../domain/models/Strength';
+import { CreateStrengthDto } from '../../infrastructure/dto/strength/CreateStrengthDto';
+
+export interface IStrengthCreator {
+  create(data: Partial<StrengthModel>): Promise<StrengthModel>;
+}
+
+export class CreateStrengthUseCase {
+  constructor(private readonly repository: IStrengthCreator) {}
+
+  async execute(data: CreateStrengthDto): Promise<StrengthModel> {
+    return this.repository.create(data);
+  }
+}
+```
+Save as `backEnd/src/use-cases/strength/CreateStrengthUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 6: Write the failing test for `UpdateStrengthUseCase`, then implement it**
+
+```typescript
+import { UpdateStrengthUseCase } from './UpdateStrengthUseCase';
+import { StrengthModel } from '../../domain/models/Strength';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IStrengthUpdater {
+  update(id: string, data: Partial<StrengthModel>): Promise<StrengthModel | null>;
+}
+
+describe('UpdateStrengthUseCase', () => {
+  it('updates and returns the entry when it exists', async () => {
+    const updated = new StrengthModel();
+    const repository: IStrengthUpdater = { update: jest.fn().mockResolvedValue(updated) };
+    const sut = new UpdateStrengthUseCase(repository);
+
+    const result = await sut.execute('1', { title: 'New title' });
+
+    expect(repository.update).toHaveBeenCalledWith('1', { title: 'New title' });
+    expect(result).toBe(updated);
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IStrengthUpdater = { update: jest.fn().mockResolvedValue(null) };
+    const sut = new UpdateStrengthUseCase(repository);
+
+    await expect(sut.execute('missing', { title: 'X' })).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/strength/UpdateStrengthUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { StrengthModel } from '../../domain/models/Strength';
+import { UpdateStrengthDto } from '../../infrastructure/dto/strength/UpdateStrengthDto';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IStrengthUpdater {
+  update(id: string, data: Partial<StrengthModel>): Promise<StrengthModel | null>;
+}
+
+export class UpdateStrengthUseCase {
+  constructor(private readonly repository: IStrengthUpdater) {}
+
+  async execute(id: string, data: UpdateStrengthDto): Promise<StrengthModel> {
+    const updated = await this.repository.update(id, data);
+
+    if (!updated) {
+      throw new NotFoundException('Strength not found');
+    }
+
+    return updated;
+  }
+}
+```
+Save as `backEnd/src/use-cases/strength/UpdateStrengthUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 7: Write the failing test for `DeleteStrengthUseCase`, then implement it**
+
+```typescript
+import { DeleteStrengthUseCase } from './DeleteStrengthUseCase';
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+interface IStrengthDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+describe('DeleteStrengthUseCase', () => {
+  it('deletes when the entry exists', async () => {
+    const repository: IStrengthDeleter = { delete: jest.fn().mockResolvedValue(true) };
+    const sut = new DeleteStrengthUseCase(repository);
+
+    await sut.execute('1');
+
+    expect(repository.delete).toHaveBeenCalledWith('1');
+  });
+
+  it('throws NotFoundException when the entry does not exist', async () => {
+    const repository: IStrengthDeleter = { delete: jest.fn().mockResolvedValue(false) };
+    const sut = new DeleteStrengthUseCase(repository);
+
+    await expect(sut.execute('missing')).rejects.toThrow(NotFoundException);
+  });
+});
+```
+Save as `backEnd/src/use-cases/strength/DeleteStrengthUseCase.test.ts`. Run it — expect FAIL.
+
+```typescript
+import { NotFoundException } from '../../shared/exceptions/NotFoundException';
+
+export interface IStrengthDeleter {
+  delete(id: string): Promise<boolean>;
+}
+
+export class DeleteStrengthUseCase {
+  constructor(private readonly repository: IStrengthDeleter) {}
+
+  async execute(id: string): Promise<void> {
+    const deleted = await this.repository.delete(id);
+
+    if (!deleted) {
+      throw new NotFoundException('Strength not found');
+    }
+  }
+}
+```
+Save as `backEnd/src/use-cases/strength/DeleteStrengthUseCase.ts`. Re-run — expect PASS.
+
+- [ ] **Step 8: Run the full Strength test suite**
+
+Run: `cd backEnd && npx jest src/use-cases/strength`
+Expected: `Tests: 7 passed, 7 total`.
+
+- [ ] **Step 9: Implement the controller**
+
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../database/config/data-source';
+import { StrengthEntity } from '../entities/StrengthEntity';
+import { StrengthRepository } from '../repositories/StrengthRepository';
+import { ListStrengthUseCase } from '../../use-cases/strength/ListStrengthUseCase';
+import { GetStrengthUseCase } from '../../use-cases/strength/GetStrengthUseCase';
+import { CreateStrengthUseCase } from '../../use-cases/strength/CreateStrengthUseCase';
+import { UpdateStrengthUseCase } from '../../use-cases/strength/UpdateStrengthUseCase';
+import { DeleteStrengthUseCase } from '../../use-cases/strength/DeleteStrengthUseCase';
+
+const repository = new StrengthRepository(AppDataSource.getRepository(StrengthEntity));
+const listUseCase = new ListStrengthUseCase(repository);
+const getUseCase = new GetStrengthUseCase(repository);
+const createUseCase = new CreateStrengthUseCase(repository);
+const updateUseCase = new UpdateStrengthUseCase(repository);
+const deleteUseCase = new DeleteStrengthUseCase(repository);
+
+export class StrengthController {
+  static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await listUseCase.execute() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await getUseCase.execute(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(201).json({ success: true, data: await createUseCase.execute(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await deleteUseCase.execute(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+```
+Save as `backEnd/src/infrastructure/controllers/StrengthController.ts`.
+
+- [ ] **Step 10: Implement the route**
+
+```typescript
+import { Router } from 'express';
+import { StrengthController } from '../controllers/StrengthController';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { validate } from '../middlewares/validate.middleware';
+import { CreateStrengthDto } from '../dto/strength/CreateStrengthDto';
+import { UpdateStrengthDto } from '../dto/strength/UpdateStrengthDto';
+
+const router = Router();
+
+router.get('/', StrengthController.list);
+router.get('/:id', StrengthController.get);
+router.post('/', authMiddleware, validate(CreateStrengthDto), StrengthController.create);
+router.put('/:id', authMiddleware, validate(UpdateStrengthDto), StrengthController.update);
+router.delete('/:id', authMiddleware, StrengthController.remove);
+
+export default router;
+```
+Save as `backEnd/src/infrastructure/routes/strength.routes.ts`.
+
+- [ ] **Step 11: Verify the backend still builds**
+
+Run: `cd backEnd && npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add backEnd/src/infrastructure/repositories/StrengthRepository.ts backEnd/src/infrastructure/dto/strength/ backEnd/src/use-cases/strength/ backEnd/src/infrastructure/controllers/StrengthController.ts backEnd/src/infrastructure/routes/strength.routes.ts
+git commit -m "Add Strength resource (repository, use-cases, controller, route)"
+```
