@@ -8,3 +8,4 @@ export * from './InterestEntity';
 export * from './SocialLinkEntity';
 export * from './ProjectEntity';
 export * from './ContactMessageEntity';
+export * from './NewsEntity';
