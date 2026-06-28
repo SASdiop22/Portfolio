@@ -1,7 +1,7 @@
-import { Experience } from '../models/Experience';
+import { ExperienceModel } from '../models/Experience';
 import { IBaseRepository } from './IBaseRepository';
 
-export interface IExperienceRepository extends IBaseRepository<Experience> {
-  findByOrder(): Promise<Experience[]>;
-  findCurrent(): Promise<Experience[]>;
+export interface IExperienceRepository {
+  findByOrder(): Promise<ExperienceModel[]>;
+  findCurrent(): Promise<ExperienceModel[]>;
 }

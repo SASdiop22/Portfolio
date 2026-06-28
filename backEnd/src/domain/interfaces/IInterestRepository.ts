@@ -1,6 +1,5 @@
-import { Interest } from '../models/Interest';
-import { IBaseRepository } from './IBaseRepository';
+import { InterestModel } from '@domain/models';
 
-export interface IInterestRepository extends IBaseRepository<Interest> {
-  findByOrder(): Promise<Interest[]>;
+export interface IInterestRepository {
+  findByOrder(): Promise<InterestModel[]>;
 }

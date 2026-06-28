@@ -1,6 +1,5 @@
-import { Language } from '../models/Language';
-import { IBaseRepository } from './IBaseRepository';
+import { LanguageModel } from '@domain/models';
 
-export interface ILanguageRepository extends IBaseRepository<Language> {
-  findByOrder(): Promise<Language[]>;
+export interface ILanguageRepository {
+  findByOrder(): Promise<LanguageModel[]>;
 }

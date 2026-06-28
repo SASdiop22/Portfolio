@@ -1,7 +1,6 @@
-import { ContactMessage } from '../models/ContactMessage';
-import { IBaseRepository } from './IBaseRepository';
+import { ContactMessageModel } from '@domain/models';
 
-export interface IContactMessageRepository extends IBaseRepository<ContactMessage> {
-  findUnread(): Promise<ContactMessage[]>;
-  markAsRead(id: string): Promise<ContactMessage | null>;
+export interface IContactMessageRepository {
+  findUnread(): Promise<ContactMessageModel[]>;
+  markAsRead(id: string): Promise<ContactMessageModel | null>;
 }

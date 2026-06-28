@@ -1,8 +1,7 @@
-import { Skill } from '../models/Skill';
-import { IBaseRepository } from './IBaseRepository';
+import { SkillModel } from '@domain/models';
 
-export interface ISkillRepository extends IBaseRepository<Skill> {
-  findByCategory(category: string): Promise<Skill[]>;
+export interface ISkillRepository {
+  findByCategory(category: string): Promise<SkillModel[]>;
   findAllCategories(): Promise<string[]>;
-  findByOrder(): Promise<Skill[]>;
+  findByOrder(): Promise<SkillModel[]>;
 }

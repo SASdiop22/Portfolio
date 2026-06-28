@@ -1,6 +1,5 @@
-import { SocialLink } from '../models/SocialLink';
-import { IBaseRepository } from './IBaseRepository';
+import { SocialLinkModel } from '@domain/models';
 
-export interface ISocialLinkRepository extends IBaseRepository<SocialLink> {
-  findByOrder(): Promise<SocialLink[]>;
+export interface ISocialLinkRepository {
+  findByOrder(): Promise<SocialLinkModel[]>;
 }
