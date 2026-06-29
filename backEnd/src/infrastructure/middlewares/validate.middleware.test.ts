@@ -28,4 +28,13 @@ describe('validate middleware', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(ValidationException));
   });
+
+  it('calls next() with a ValidationException instead of throwing when req.body is undefined', async () => {
+    const req = { body: undefined } as Request;
+    const next = jest.fn();
+
+    await validate(TestDto)(req, {} as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith(expect.any(ValidationException));
+  });
 });
