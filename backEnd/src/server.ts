@@ -5,7 +5,7 @@ import { resolve } from 'path';
 // Charger .env AVANT tout
 dotenv.config({ path: resolve(__dirname, '../.env') });
 
-import express, { Application, Request, Response, NextFunction } from 'express';
+import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import { envConfig } from './config/env.config';
 import { initializeDatabase } from './infrastructure/database/config/data-source';
