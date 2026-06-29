@@ -14,7 +14,8 @@
     "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "test": "jest"
+    "test": "jest",
+    "seed:admin": "ts-node -r tsconfig-paths/register src/infrastructure/database/seeders/admin-user.seed.ts"
   },
   "keywords": ["portfolio", "api", "typescript", "express"],
   "author": "",

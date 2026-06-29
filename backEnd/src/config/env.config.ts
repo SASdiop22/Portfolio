@@ -25,6 +25,11 @@ interface EnvConfig {
     expiresIn: string;
   };
 
+  admin: {
+    email: string;
+    password: string;
+  };
+
   // CORS
   frontendUrl: string;
 
@@ -59,6 +64,11 @@ class EnvConfigService {
       jwt: {
         secret: this.getRequired('JWT_SECRET'),
         expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+      },
+
+      admin: {
+        email: this.getRequired('ADMIN_EMAIL'),
+        password: this.getRequired('ADMIN_PASSWORD'),
       },
 
       frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
