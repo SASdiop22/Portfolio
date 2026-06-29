@@ -1,4 +1,4 @@
-import { SkillModel } from '../models/Skill';
+import { SkillModel } from '@domain/models/Skill';
 
 export interface ISkillRepository {
   findByCategory(category: string): Promise<SkillModel[]>;

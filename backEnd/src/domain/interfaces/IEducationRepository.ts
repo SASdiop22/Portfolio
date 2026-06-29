@@ -1,4 +1,4 @@
-import { EducationModel } from '../models/Education';
+import { EducationModel } from '@domain/models/Education';
 
 export interface IEducationRepository {
   findByOrder(): Promise<EducationModel[]>;

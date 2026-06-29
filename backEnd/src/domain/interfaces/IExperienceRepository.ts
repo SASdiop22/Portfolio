@@ -1,4 +1,4 @@
-import { ExperienceModel } from '../models/Experience';
+import { ExperienceModel } from '@domain/models/Experience';
 
 export interface IExperienceRepository {
   findByOrder(): Promise<ExperienceModel[]>;

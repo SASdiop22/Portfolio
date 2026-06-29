@@ -1,4 +1,4 @@
-import { ProjectModel } from '../models/Project';
+import { ProjectModel } from '@domain/models/Project';
 
 export interface IProjectRepository {
   findFeatured(): Promise<ProjectModel[]>;

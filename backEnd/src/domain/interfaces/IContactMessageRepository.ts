@@ -1,4 +1,4 @@
-import { ContactMessageModel } from '../models/ContactMessage';
+import { ContactMessageModel } from '@domain/models/ContactMessage';
 
 export interface IContactMessageRepository {
   findUnread(): Promise<ContactMessageModel[]>;
