@@ -4,4 +4,5 @@ export class LanguageModel {
   public level: string;
   public order: number;
   public createdAt: Date;
+  public updatedAt: Date;
 }

@@ -8,4 +8,5 @@ export class NewsModel {
   public publishedAt: Date;
   public order: number;
   public createdAt: Date;
+  public updatedAt: Date;
 }

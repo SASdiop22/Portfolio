@@ -10,4 +10,5 @@ export class EducationModel {
   public current: boolean;
   public order: number;
   public createdAt: Date;
+  public updatedAt: Date;
 }

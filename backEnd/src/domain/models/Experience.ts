@@ -11,4 +11,5 @@ export class ExperienceModel {
   public link: string;
   public order: number;
   public createdAt: Date;
+  public updatedAt: Date;
 }

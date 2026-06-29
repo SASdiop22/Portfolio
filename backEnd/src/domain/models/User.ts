@@ -12,4 +12,5 @@ export class UserModel {
   public mobility: string;
   public phone: string;
   public createdAt: Date;
+  public updatedAt: Date;
 }
