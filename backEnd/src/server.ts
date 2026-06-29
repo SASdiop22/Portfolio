@@ -9,6 +9,7 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { envConfig } from './config/env.config';
 import { initializeDatabase } from './infrastructure/database/config/data-source';
+import { errorMiddleware } from '@infrastructure/middlewares/error.middleware';
 
 // Initialiser l'application Express
 const app: Application = express();
@@ -72,17 +73,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Gestionnaire d'erreurs global
-// Express identifies error-handling middleware by its 4-argument arity, so `next`
-// must stay in the signature even though it's unused.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('❌ Erreur:', err);
-  res.status(500).json({
-    success: false,
-    message: 'Erreur interne du serveur',
-    error: envConfig.nodeEnv === 'development' ? err.message : undefined,
-  });
-});
+app.use(errorMiddleware);
 
 // ========================================
 // DÉMARRAGE DU SERVEUR
