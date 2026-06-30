@@ -35,7 +35,10 @@ export class ProjectRepository
   }
 
   async findFeatured(): Promise<ProjectModel[]> {
-    const entities = await this.repository.find({ where: { featured: true }, order: { order: 'ASC' } });
+    const entities = await this.repository.find({
+      where: { featured: true },
+      order: { order: 'ASC' },
+    });
     return entities.map((entity) => this.toModel(entity));
   }
 }

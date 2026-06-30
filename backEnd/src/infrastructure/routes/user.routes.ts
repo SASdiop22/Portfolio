@@ -8,7 +8,12 @@ import { UpdateUserProfileDto } from '@infrastructure/dto/user/UpdateUserProfile
 const router = Router();
 
 router.get('/profile', UserController.getProfile);
-router.put('/profile', authMiddleware, validate(UpdateUserProfileDto), UserController.updateProfile);
+router.put(
+  '/profile',
+  authMiddleware,
+  validate(UpdateUserProfileDto),
+  UserController.updateProfile,
+);
 router.post('/photo', authMiddleware, uploadUserPhoto.single('photo'), UserController.uploadPhoto);
 
 export default router;

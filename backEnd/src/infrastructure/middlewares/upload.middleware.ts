@@ -14,7 +14,11 @@ const storage = multer.diskStorage({
   },
 });
 
-function fileFilter(req: Request, file: Express.Multer.File, callback: multer.FileFilterCallback): void {
+function fileFilter(
+  req: Request,
+  file: Express.Multer.File,
+  callback: multer.FileFilterCallback,
+): void {
   const allowed = ['image/jpeg', 'image/png', 'image/webp'];
 
   if (allowed.includes(file.mimetype)) {

@@ -25,7 +25,10 @@ export class ContactMessageRepository
   }
 
   async findUnread(): Promise<ContactMessageModel[]> {
-    const entities = await this.repository.find({ where: { read: false }, order: { createdAt: 'DESC' } });
+    const entities = await this.repository.find({
+      where: { read: false },
+      order: { createdAt: 'DESC' },
+    });
     return entities.map((entity) => this.toModel(entity));
   }
 

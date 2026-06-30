@@ -31,12 +31,18 @@ function fakeRepository() {
 describe('BaseRepository', () => {
   it('findAll maps every entity through toModel', async () => {
     const repo = fakeRepository();
-    repo.find.mockResolvedValue([{ id: '1', title: 'A' }, { id: '2', title: 'B' }]);
+    repo.find.mockResolvedValue([
+      { id: '1', title: 'A' },
+      { id: '2', title: 'B' },
+    ]);
     const sut = new TestRepository(repo as unknown as Repository<FakeEntity>);
 
     const result = await sut.findAll();
 
-    expect(result).toEqual([{ id: '1', title: 'A' }, { id: '2', title: 'B' }]);
+    expect(result).toEqual([
+      { id: '1', title: 'A' },
+      { id: '2', title: 'B' },
+    ]);
   });
 
   it('findById returns null when nothing is found', async () => {

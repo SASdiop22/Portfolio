@@ -10,7 +10,11 @@ describe('CreateProjectUseCase', () => {
     const created = new ProjectModel();
     const repository: IProjectCreator = { create: jest.fn().mockResolvedValue(created) };
     const sut = new CreateProjectUseCase(repository);
-    const input = { title: 'Portfolio', description: 'desc', technologies: ['Next.js', 'TypeScript'] };
+    const input = {
+      title: 'Portfolio',
+      description: 'desc',
+      technologies: ['Next.js', 'TypeScript'],
+    };
 
     const result = await sut.execute(input);
 

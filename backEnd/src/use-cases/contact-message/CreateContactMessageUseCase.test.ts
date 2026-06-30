@@ -10,7 +10,12 @@ describe('CreateContactMessageUseCase', () => {
     const created = new ContactMessageModel();
     const repository: IContactMessageCreator = { create: jest.fn().mockResolvedValue(created) };
     const sut = new CreateContactMessageUseCase(repository);
-    const input = { name: 'Jane', email: 'jane@example.com', subject: 'Hello', message: 'Hi there' };
+    const input = {
+      name: 'Jane',
+      email: 'jane@example.com',
+      subject: 'Hello',
+      message: 'Hi there',
+    };
 
     const result = await sut.execute(input);
 

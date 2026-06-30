@@ -21,7 +21,7 @@ export class EducationRepository
     model.specialization = entity.specialization;
     model.description = entity.description;
     model.startDate = entity.startDate;
-    model.endDate = entity.endDate ?? null as unknown as Date;
+    model.endDate = entity.endDate ?? (null as unknown as Date);
     model.current = entity.current;
     model.order = entity.order;
     model.createdAt = entity.createdAt;
@@ -35,7 +35,10 @@ export class EducationRepository
   }
 
   async findCurrent(): Promise<EducationModel[]> {
-    const entities = await this.repository.find({ where: { current: true }, order: { order: 'ASC' } });
+    const entities = await this.repository.find({
+      where: { current: true },
+      order: { order: 'ASC' },
+    });
     return entities.map((entity) => this.toModel(entity));
   }
 }

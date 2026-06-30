@@ -1,4 +1,13 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsInt, Min, IsUrl, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsInt,
+  Min,
+  IsUrl,
+  IsArray,
+} from 'class-validator';
 
 export class UpdateProjectDto {
   @IsOptional()

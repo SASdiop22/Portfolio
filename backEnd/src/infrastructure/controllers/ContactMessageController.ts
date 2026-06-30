@@ -26,7 +26,8 @@ export class ContactMessageController {
 
   static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const result = req.query.unread === 'true' ? await unreadUseCase.execute() : await listUseCase.execute();
+      const result =
+        req.query.unread === 'true' ? await unreadUseCase.execute() : await listUseCase.execute();
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);

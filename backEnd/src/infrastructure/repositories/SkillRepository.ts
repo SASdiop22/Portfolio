@@ -4,7 +4,10 @@ import { SkillModel } from '@domain/models/Skill';
 import { SkillEntity } from '@infrastructure/entities/SkillEntity';
 import { ISkillRepository } from '@domain/interfaces/ISkillRepository';
 
-export class SkillRepository extends BaseRepository<SkillModel, SkillEntity> implements ISkillRepository {
+export class SkillRepository
+  extends BaseRepository<SkillModel, SkillEntity>
+  implements ISkillRepository
+{
   constructor(repository: Repository<SkillEntity>) {
     super(repository);
   }

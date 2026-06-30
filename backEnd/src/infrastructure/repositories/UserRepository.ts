@@ -4,7 +4,10 @@ import { UserModel } from '@domain/models/User';
 import { UserEntity } from '@infrastructure/entities/UserEntity';
 import { IUserRepository } from '@domain/interfaces/IUserRepository';
 
-export class UserRepository extends BaseRepository<UserModel, UserEntity> implements IUserRepository {
+export class UserRepository
+  extends BaseRepository<UserModel, UserEntity>
+  implements IUserRepository
+{
   constructor(repository: Repository<UserEntity>) {
     super(repository);
   }

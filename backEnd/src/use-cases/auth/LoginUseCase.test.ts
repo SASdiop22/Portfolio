@@ -24,7 +24,12 @@ describe('LoginUseCase', () => {
 
     const result = await sut.execute({ email: 'admin@example.com', password: 'plain-password' });
 
-    expect(result.user).toEqual({ id: '1', email: 'admin@example.com', firstName: 'Ada', lastName: 'Lovelace' });
+    expect(result.user).toEqual({
+      id: '1',
+      email: 'admin@example.com',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+    });
     expect(typeof result.token).toBe('string');
   });
 

@@ -36,7 +36,10 @@ export class ExperienceRepository
   }
 
   async findCurrent(): Promise<ExperienceModel[]> {
-    const entities = await this.repository.find({ where: { current: true }, order: { order: 'ASC' } });
+    const entities = await this.repository.find({
+      where: { current: true },
+      order: { order: 'ASC' },
+    });
     return entities.map((entity) => this.toModel(entity));
   }
 }

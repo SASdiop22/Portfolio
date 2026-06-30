@@ -10,7 +10,14 @@ describe('CreateExperienceUseCase', () => {
     const created = new ExperienceModel();
     const repository: IExperienceCreator = { create: jest.fn().mockResolvedValue(created) };
     const sut = new CreateExperienceUseCase(repository);
-    const input = { company: 'Acme', position: 'Dev', city: 'Paris', title: 'Dev', description: 'desc', startDate: '2020-01-01' };
+    const input = {
+      company: 'Acme',
+      position: 'Dev',
+      city: 'Paris',
+      title: 'Dev',
+      description: 'desc',
+      startDate: '2020-01-01',
+    };
 
     const result = await sut.execute(input);
 

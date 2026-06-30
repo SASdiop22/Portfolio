@@ -22,6 +22,8 @@ describe('UpdateSocialLinkUseCase', () => {
     const repository: ISocialLinkUpdater = { update: jest.fn().mockResolvedValue(null) };
     const sut = new UpdateSocialLinkUseCase(repository);
 
-    await expect(sut.execute('missing', { url: 'https://x.com' })).rejects.toThrow(NotFoundException);
+    await expect(sut.execute('missing', { url: 'https://x.com' })).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

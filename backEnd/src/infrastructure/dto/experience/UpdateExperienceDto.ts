@@ -1,4 +1,13 @@
-import { IsString, IsNotEmpty, IsDateString, IsOptional, IsBoolean, IsInt, Min, IsUrl } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsDateString,
+  IsOptional,
+  IsBoolean,
+  IsInt,
+  Min,
+  IsUrl,
+} from 'class-validator';
 
 export class UpdateExperienceDto {
   @IsOptional()

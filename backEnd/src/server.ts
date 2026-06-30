@@ -10,6 +10,7 @@ import cors from 'cors';
 import { envConfig } from './config/env.config';
 import { initializeDatabase } from './infrastructure/database/config/data-source';
 import { errorMiddleware } from '@infrastructure/middlewares/error.middleware';
+import apiRoutes from '@infrastructure/routes';
 
 // Initialiser l'application Express
 const app: Application = express();
@@ -54,10 +55,7 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
-// TODO: Ajouter les routes API ici
-// app.use(`${envConfig.apiPrefix}/projects`, projectRoutes);
-// app.use(`${envConfig.apiPrefix}/skills`, skillRoutes);
-// etc...
+app.use(envConfig.apiPrefix, apiRoutes);
 
 // ========================================
 // GESTION DES ERREURS

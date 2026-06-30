@@ -4,7 +4,10 @@ import { NewsModel } from '@domain/models/News';
 import { NewsEntity } from '@infrastructure/entities/NewsEntity';
 import { INewsRepository } from '@domain/interfaces/INewsRepository';
 
-export class NewsRepository extends BaseRepository<NewsModel, NewsEntity> implements INewsRepository {
+export class NewsRepository
+  extends BaseRepository<NewsModel, NewsEntity>
+  implements INewsRepository
+{
   constructor(repository: Repository<NewsEntity>) {
     super(repository);
   }

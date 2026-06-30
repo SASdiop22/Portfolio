@@ -20,7 +20,10 @@ const deleteUseCase = new DeleteProjectUseCase(repository);
 export class ProjectController {
   static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const result = req.query.featured === 'true' ? await featuredUseCase.execute() : await listUseCase.execute();
+      const result =
+        req.query.featured === 'true'
+          ? await featuredUseCase.execute()
+          : await listUseCase.execute();
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);
@@ -45,7 +48,9 @@ export class ProjectController {
 
   static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+      res
+        .status(200)
+        .json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
     } catch (error) {
       next(error);
     }

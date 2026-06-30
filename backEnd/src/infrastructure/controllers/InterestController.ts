@@ -42,7 +42,9 @@ export class InterestController {
 
   static async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      res.status(200).json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
+      res
+        .status(200)
+        .json({ success: true, data: await updateUseCase.execute(req.params.id, req.body) });
     } catch (error) {
       next(error);
     }
