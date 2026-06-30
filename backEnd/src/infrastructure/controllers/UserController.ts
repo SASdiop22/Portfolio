@@ -15,7 +15,9 @@ const uploadPhotoUseCase = new UploadUserPhotoUseCase(repository, envConfig.uplo
 export class UserController {
   static async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      res.status(200).json({ success: true, data: await getProfileUseCase.execute() });
+      const { password: _password, ...profile } = await getProfileUseCase.execute();
+      void _password;
+      res.status(200).json({ success: true, data: profile });
     } catch (error) {
       next(error);
     }
@@ -24,7 +26,9 @@ export class UserController {
   static async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await updateProfileUseCase.execute(req.user!.userId, req.body);
-      res.status(200).json({ success: true, data: result });
+      const { password: _password, ...profile } = result;
+      void _password;
+      res.status(200).json({ success: true, data: profile });
     } catch (error) {
       next(error);
     }
@@ -33,7 +37,9 @@ export class UserController {
   static async uploadPhoto(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await uploadPhotoUseCase.execute(req.user!.userId, req.file!.filename);
-      res.status(200).json({ success: true, data: result });
+      const { password: _password, ...profile } = result;
+      void _password;
+      res.status(200).json({ success: true, data: profile });
     } catch (error) {
       next(error);
     }
