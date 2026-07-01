@@ -15,10 +15,12 @@ Construire le portfolio public complet : Home (hero 3D interactif), Parcours, Pr
 ## Esthétique globale
 
 - **Mode** : Dark uniquement
-- **Fond** : Noir quasi-pur (`#030712`) avec nuances dark navy pour les sections alternées (`#0a0f1e`)
-- **Accent principal** : Bleu électrique néon (`#3b82f6` / `blue-500`)
-- **Texte principal** : Blanc pur (`#f8fafc`)
-- **Texte secondaire** : Gris muted (`#64748b` / `slate-500`)
+- **Fond principal** : Dark navy profond (`#05091a`) — bleu nuit, pas noir pur
+- **Fond sections alternées** : Navy plus soutenu (`#0a1128`)
+- **Accent principal** : Bleu foncé saphir (`#1d4ed8` / `blue-700`)
+- **Accent hover/glow** : Bleu légèrement plus clair (`#2563eb` / `blue-600`) pour les états actifs
+- **Texte principal** : Blanc doux (`#e2e8f0` / `slate-200`)
+- **Texte secondaire** : Bleu-gris muted (`#64748b` / `slate-500`)
 - **Typographie** : `Inter` variable (déjà dispo via Next.js) — display 72–96px pour les titres hero, 48px pour les titres de page, 16–18px pour le corps
 - **Border radius** : `0.5rem` (cohérent avec la config shadcn)
 - **Animations** : Framer Motion pour les transitions scroll ; React Three Fiber pour la scène 3D
@@ -106,7 +108,7 @@ src/
 
 ### Navbar
 - Position : `fixed top-0`, `z-50`, `backdrop-blur-md bg-black/70`, border-bottom `border-white/5`
-- Logo : initiales en `font-bold text-blue-500` (depuis profil si dispo, sinon "AS")
+- Logo : initiales en `font-bold text-blue-700` (depuis profil si dispo, sinon "AS")
 - Liens : `Accueil · Parcours · Projets · Compétences · Actualités`
 - Indicateur actif : underline néon bleu animé (Framer Motion `layoutId`)
 - Mobile : hamburger → drawer slide-in droite avec Framer Motion
@@ -129,7 +131,7 @@ src/
 ## Page Home `/`
 
 ### HeroSection
-- `ParticleField` : scène R3F plein écran (`position: fixed`), 4 000 particules `Points`, shader custom couleur `#3b82f6` avec variation aléatoire, animation `useFrame` rotation lente + attracteur souris (`raycaster`)
+- `ParticleField` : scène R3F plein écran (`position: fixed`), 4 000 particules `Points`, shader custom couleur `#1d4ed8` avec variation aléatoire, animation `useFrame` rotation lente + attracteur souris (`raycaster`)
 - Contenu centré (`z-10` au-dessus des particules) :
   - `firstName + lastName` en `text-7xl font-black text-white`
   - `desiredPosition` avec effet typewriter Framer Motion (`animate` sur `width`)
@@ -139,7 +141,7 @@ src/
 - Scroll indicator : chevron animé en bas, disparaît au scroll
 
 ### AboutSection
-- 2 colonnes : photo à gauche avec `ring-2 ring-blue-500/50` + border néon animé, texte à droite
+- 2 colonnes : photo à gauche avec `ring-2 ring-blue-700/50` + border néon animé, texte à droite
 - Photo depuis `profile.photo` (fallback avatar initiales)
 - Champs affichés : `firstName lastName`, `desiredPosition`, `city`, `mobility`, `phone`
 - Apparition : slide-in left/right au scroll
@@ -160,7 +162,7 @@ src/
 ## Page Parcours `/parcours`
 
 - SectionHero "Mon Parcours"
-- Timeline verticale : ligne centrale `border-l-2 border-blue-500/30`
+- Timeline verticale : ligne centrale `border-l-2 border-blue-700/30`
 - Entrées triées par `startDate` décroissant (plus récent en haut)
 - **Formation** (icône `GraduationCap`) : `title` + `specialization` | `institution`, `city` | période | `description`
 - **Expérience** (icône `Briefcase`) : `position` / `title` | `company`, `city` | période | `description` | lien `link`
@@ -174,7 +176,7 @@ src/
 - SectionHero "Mes Projets"
 - Grid 3 cols (desktop) / 2 (tablet) / 1 (mobile)
 - `ProjectCard` : `imageUrl` ou gradient généré, `title`, `description` (max 120 chars), badges `technologies[]`, icônes `Github` + `ExternalLink`
-- Projects `featured: true` → `ring-2 ring-blue-500`
+- Projects `featured: true` → `ring-2 ring-blue-700`
 - Hover : `scale-105` + overlay néon
 
 ### Page détail `/projets/[id]`
