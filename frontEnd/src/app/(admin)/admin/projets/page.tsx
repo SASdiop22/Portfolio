@@ -1,7 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus, Upload, ImageIcon } from 'lucide-react';
 import { AdminGuard } from '@/components/admin/AdminGuard';
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
 import { AdminTable } from '@/components/admin/AdminTable';
@@ -70,6 +70,8 @@ export default function ProjetsAdminPage() {
   const [editing, setEditing] = useState<Project | null>(null);
   const [form, setForm] = useState<ProjectForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function openCreate() {
     setEditing(null);
@@ -95,6 +97,24 @@ export default function ProjetsAdminPage() {
       [name]:
         type === 'checkbox' ? (e.target as HTMLInputElement).checked : type === 'number' ? Number(value) : value,
     }));
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!editing || !e.target.files?.[0]) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('photo', e.target.files[0]);
+      const { data } = await api.post<{ success: boolean; data: Project }>(
+        `/projects/${editing.id}/image`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      setForm((f) => ({ ...f, imageUrl: data.data.imageUrl ?? '' }));
+      await qc.invalidateQueries({ queryKey: ['projects'] });
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -194,8 +214,48 @@ export default function ProjetsAdminPage() {
             placeholder="React, Node.js, PostgreSQL"
             required
           />
+          {/* Image upload — only available when editing an existing project */}
+          {editing && (
+            <div className="flex flex-col gap-2">
+              <label className="text-sm text-slate-400">Image du projet</label>
+              {form.imageUrl && (
+                <img
+                  src={form.imageUrl}
+                  alt="preview"
+                  className="w-full h-36 object-cover rounded-lg opacity-80"
+                />
+              )}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                >
+                  {uploading ? (
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Upload size={14} />
+                  )}
+                  {uploading ? 'Upload…' : 'Uploader une image'}
+                </button>
+                {form.imageUrl && (
+                  <span className="flex items-center gap-1 text-xs text-green-400">
+                    <ImageIcon size={12} /> Image définie
+                  </span>
+                )}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleImageUpload}
+              />
+            </div>
+          )}
           <AdminFormField
-            label="URL image"
+            label="URL image (ou coller une URL externe)"
             name="imageUrl"
             value={form.imageUrl}
             onChange={handleChange}

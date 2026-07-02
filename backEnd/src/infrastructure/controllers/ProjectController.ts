@@ -1,3 +1,4 @@
+import path from 'path';
 import { Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '@infrastructure/database/config/data-source';
 import { ProjectEntity } from '@infrastructure/entities/ProjectEntity';
@@ -8,6 +9,7 @@ import { GetProjectUseCase } from '@use-cases/project/GetProjectUseCase';
 import { CreateProjectUseCase } from '@use-cases/project/CreateProjectUseCase';
 import { UpdateProjectUseCase } from '@use-cases/project/UpdateProjectUseCase';
 import { DeleteProjectUseCase } from '@use-cases/project/DeleteProjectUseCase';
+import { uploadToSupabase } from '@infrastructure/storage/supabase-storage.service';
 
 const repository = new ProjectRepository(AppDataSource.getRepository(ProjectEntity));
 const listUseCase = new ListProjectUseCase(repository);
@@ -60,6 +62,19 @@ export class ProjectController {
     try {
       await deleteUseCase.execute(req.params.id);
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async uploadImage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const file = req.file!;
+      const ext = path.extname(file.originalname);
+      const filename = `project-${req.params.id}-${Date.now()}${ext}`;
+      const publicUrl = await uploadToSupabase(file.buffer, filename, file.mimetype);
+      const updated = await updateUseCase.execute(req.params.id, { imageUrl: publicUrl });
+      res.status(200).json({ success: true, data: updated });
     } catch (error) {
       next(error);
     }
