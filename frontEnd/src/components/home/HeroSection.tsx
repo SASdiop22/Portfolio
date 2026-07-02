@@ -25,13 +25,13 @@ export function HeroSection() {
         <ParticleField />
       </div>
 
-      <div className="relative z-10 text-center px-6 max-w-4xl mx-auto">
+      <div className="relative z-10 text-center px-4 w-full max-w-6xl mx-auto">
         {name && (
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.2 }}
-            className="text-7xl md:text-8xl font-black text-white mb-4 leading-none"
+            className="text-5xl md:text-6xl lg:text-7xl font-black text-white mb-4 leading-tight"
           >
             {name}
           </motion.h1>

@@ -10,6 +10,8 @@ export interface UserProfile {
   mobility: string;
   phone: string;
   email: string;
+  ctaTitle: string;
+  ctaText: string;
 }
 
 export interface Education {
@@ -77,6 +79,13 @@ export interface SocialLink {
   platform: string;
   url: string;
   logo: string | null;
+  order: number;
+}
+
+export interface Language {
+  id: string;
+  title: string;
+  level: string;
   order: number;
 }
 

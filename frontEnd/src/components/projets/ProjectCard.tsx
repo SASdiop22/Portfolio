@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import type { Project } from '@/lib/types';
 
 interface Props {
-  project: Project;
+  readonly project: Project;
 }
 
 export function ProjectCard({ project }: Props) {
@@ -20,13 +20,22 @@ export function ProjectCard({ project }: Props) {
       )}
     >
       <Link href={`/projets/${project.id}`} className="block group">
-        <div className="relative h-48 bg-gradient-to-br from-blue-900/20 to-[#05091a] overflow-hidden">
-          {project.imageUrl && (
+        <div className="relative h-44 overflow-hidden bg-[#05091a]">
+          {project.imageUrl ? (
             <img
               src={project.imageUrl}
               alt={project.title}
               className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
             />
+          ) : (
+            <>
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-900/30 via-[#05091a] to-[#0a1128]" />
+              <div className="absolute -top-6 -right-6 w-32 h-32 bg-blue-700/10 rounded-full blur-2xl" />
+              <div className="absolute bottom-0 left-0 w-24 h-24 bg-blue-900/20 rounded-full blur-xl" />
+              <span className="absolute bottom-4 left-5 text-xs text-blue-700/40 font-mono select-none">
+                {project.technologies.slice(0, 2).join(' · ')}
+              </span>
+            </>
           )}
         </div>
 
@@ -35,9 +44,7 @@ export function ProjectCard({ project }: Props) {
             {project.title}
           </h3>
           <p className="text-slate-400 text-sm mb-4 line-clamp-3">
-            {project.description.length > 120
-              ? `${project.description.slice(0, 120)}...`
-              : project.description}
+            {project.description}
           </p>
 
           <div className="flex flex-wrap gap-1.5 mb-4">

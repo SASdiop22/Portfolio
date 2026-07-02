@@ -3,23 +3,23 @@ import { SkillCard } from './SkillCard';
 import type { Skill } from '@/lib/types';
 
 interface Props {
-  category: string;
-  skills: Skill[];
+  readonly category: string;
+  readonly skills: Skill[];
 }
 
 export function SkillCategory({ category, skills }: Props) {
   return (
     <div className="mb-14">
-      <h2 className="text-2xl font-bold text-white mb-6 capitalize">
+      <h2 className="text-xl font-semibold text-white mb-5 capitalize tracking-wide">
         {category}
       </h2>
-      <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
-        {skills.map((skill, i) => (
-          <AnimatedSection key={skill.id} delay={i * 0.04}>
-            <SkillCard skill={skill} />
-          </AnimatedSection>
-        ))}
-      </div>
+      <AnimatedSection delay={0.05}>
+        <div className="flex flex-wrap gap-3">
+          {skills.map((skill) => (
+            <SkillCard key={skill.id} skill={skill} />
+          ))}
+        </div>
+      </AnimatedSection>
     </div>
   );
 }
