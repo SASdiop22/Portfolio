@@ -11,6 +11,8 @@ export class UserModel {
   public city: string;
   public mobility: string;
   public phone: string;
+  public ctaTitle: string;
+  public ctaText: string;
   public createdAt: Date;
   public updatedAt: Date;
 }

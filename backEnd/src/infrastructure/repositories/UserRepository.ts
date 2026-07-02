@@ -26,6 +26,8 @@ export class UserRepository
     model.city = entity.city ?? '';
     model.mobility = entity.mobility ?? '';
     model.phone = entity.phone ?? '';
+    model.ctaTitle = entity.ctaTitle ?? '';
+    model.ctaText = entity.ctaText ?? '';
     model.createdAt = entity.createdAt;
     model.updatedAt = entity.updatedAt;
     return model;
