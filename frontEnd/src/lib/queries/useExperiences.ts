@@ -6,7 +6,7 @@ export function useExperiences() {
   return useQuery({
     queryKey: ['experiences'],
     queryFn: async () => {
-      const { data } = await api.get<ApiResponse<Experience[]>>('/experiences');
+      const { data } = await api.get<ApiResponse<Experience[]>>('/experience');
       return data.data;
     },
   });
