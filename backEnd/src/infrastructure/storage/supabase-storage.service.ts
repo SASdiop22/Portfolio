@@ -1,10 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { envConfig } from '@config/env.config';
-import ws from 'ws';
 
-const supabase = createClient(envConfig.supabase.url, envConfig.supabase.serviceKey, {
-  realtime: { transport: ws as unknown as typeof WebSocket },
-});
+const supabase = createClient(envConfig.supabase.url, envConfig.supabase.serviceKey);
 
 export async function uploadToSupabase(
   buffer: Buffer,
