@@ -8,10 +8,12 @@ dotenv.config({ path: resolve(__dirname, '../.env') });
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import hpp from 'hpp';
 import rateLimit from 'express-rate-limit';
 import { envConfig } from './config/env.config';
 import { initializeDatabase } from './infrastructure/database/config/data-source';
 import { errorMiddleware } from '@infrastructure/middlewares/error.middleware';
+import { SecurityLogger } from '@infrastructure/security/SecurityLogger';
 import apiRoutes from '@infrastructure/routes';
 
 // Initialiser l'application Express
@@ -57,6 +59,9 @@ app.use(`${envConfig.apiPrefix}/auth`, authLimiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// HTTP Parameter Pollution protection — prevents ?role=user&role=admin attacks
+app.use(hpp());
+
 // Servir les fichiers statiques (uploads)
 app.use('/uploads', express.static('uploads'));
 
@@ -87,8 +92,13 @@ app.use(envConfig.apiPrefix, apiRoutes);
 // GESTION DES ERREURS
 // ========================================
 
-// Route 404
+// Route 404 — log probe attempts (scanners, path traversal, etc.)
 app.use((req: Request, res: Response) => {
+  SecurityLogger.unauthorizedAccess(
+    req.ip ?? 'unknown',
+    req.headers['user-agent'] ?? 'unknown',
+    req.path,
+  );
   res.status(404).json({
     success: false,
     message: 'Route non trouvée',
