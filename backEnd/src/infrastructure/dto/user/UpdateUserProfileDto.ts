@@ -36,4 +36,12 @@ export class UpdateUserProfileDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  ctaTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  ctaText?: string;
 }

@@ -1,20 +1,37 @@
-import { DataSource } from 'typeorm';
+import { DataSource, DataSourceOptions } from 'typeorm';
 import { envConfig } from '../../../config/env.config';
 import * as entities from '../../entities';
 
-export const AppDataSource = new DataSource({
+const isProduction = envConfig.nodeEnv === 'production';
+const databaseUrl = process.env.DATABASE_URL;
+
+const baseOptions: Partial<DataSourceOptions> = {
   type: 'postgres',
-  host: envConfig.database.host,
-  port: envConfig.database.port,
-  username: envConfig.database.username,
-  password: envConfig.database.password,
-  database: envConfig.database.database,
-  synchronize: envConfig.nodeEnv === 'development', // ⚠️ Seulement en dev
-  logging: envConfig.nodeEnv === 'development',
+  synchronize: !isProduction,
+  logging: !isProduction,
   entities: Object.values(entities),
   migrations: ['src/infrastructure/database/migrations/**/*.ts'],
   subscribers: [],
-});
+};
+
+const connectionOptions: DataSourceOptions = databaseUrl
+  ? {
+      ...baseOptions,
+      type: 'postgres',
+      url: databaseUrl,
+      ssl: isProduction ? { rejectUnauthorized: false } : false,
+    }
+  : {
+      ...baseOptions,
+      type: 'postgres',
+      host: envConfig.database.host,
+      port: envConfig.database.port,
+      username: envConfig.database.username,
+      password: envConfig.database.password,
+      database: envConfig.database.database,
+    };
+
+export const AppDataSource = new DataSource(connectionOptions);
 
 export const initializeDatabase = async (): Promise<void> => {
   try {

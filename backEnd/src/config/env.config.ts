@@ -54,11 +54,11 @@ class EnvConfigService {
       apiPrefix: process.env.API_PREFIX || '/api/v1',
 
       database: {
-        host: this.getRequired('DB_HOST'),
+        host: process.env.DB_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || '5432', 10),
-        username: this.getRequired('DB_USERNAME'),
-        password: process.env.DB_PASSWORD || '', // Optionnel en dev local
-        database: this.getRequired('DB_DATABASE'),
+        username: process.env.DB_USERNAME || 'postgres',
+        password: process.env.DB_PASSWORD || '',
+        database: process.env.DB_DATABASE || 'portfolio_db',
       },
 
       jwt: {

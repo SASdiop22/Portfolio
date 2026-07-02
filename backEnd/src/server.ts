@@ -7,6 +7,8 @@ dotenv.config({ path: resolve(__dirname, '../.env') });
 
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { envConfig } from './config/env.config';
 import { initializeDatabase } from './infrastructure/database/config/data-source';
 import { errorMiddleware } from '@infrastructure/middlewares/error.middleware';
@@ -19,6 +21,9 @@ const app: Application = express();
 // MIDDLEWARES
 // ========================================
 
+// Sécurité HTTP headers
+app.use(helmet());
+
 // CORS - Autoriser les requêtes depuis le frontend
 app.use(
   cors({
@@ -27,9 +32,30 @@ app.use(
   }),
 );
 
+// Rate limiting global : 200 req/15min par IP
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Trop de requêtes, réessayez dans 15 minutes.' },
+  }),
+);
+
+// Rate limiting strict sur l'authentification : 10 req/15min par IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Trop de tentatives de connexion, réessayez dans 15 minutes.' },
+});
+app.use(`${envConfig.apiPrefix}/auth`, authLimiter);
+
 // Parser JSON et URL-encoded
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Servir les fichiers statiques (uploads)
 app.use('/uploads', express.static('uploads'));
@@ -39,7 +65,7 @@ app.use('/uploads', express.static('uploads'));
 // ========================================
 
 // Route de test
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (_req: Request, res: Response) => {
   res.json({
     message: '🚀 Portfolio API is running',
     version: '1.0.0',
@@ -48,7 +74,7 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // Health check
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
