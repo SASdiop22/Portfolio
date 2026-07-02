@@ -38,6 +38,13 @@ interface EnvConfig {
     maxFileSize: number;
     uploadPath: string;
   };
+
+  // Supabase Storage
+  supabase: {
+    url: string;
+    serviceKey: string;
+    bucket: string;
+  };
 }
 
 class EnvConfigService {
@@ -76,6 +83,12 @@ class EnvConfigService {
       upload: {
         maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880', 10),
         uploadPath: process.env.UPLOAD_PATH || './uploads',
+      },
+
+      supabase: {
+        url: process.env.SUPABASE_URL || '',
+        serviceKey: process.env.SUPABASE_SERVICE_KEY || '',
+        bucket: process.env.SUPABASE_BUCKET || 'photos',
       },
     };
   }

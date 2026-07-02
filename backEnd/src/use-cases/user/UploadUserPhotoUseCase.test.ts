@@ -1,9 +1,6 @@
 import { UploadUserPhotoUseCase } from './UploadUserPhotoUseCase';
 import { UserModel } from '@domain/models/User';
 import { NotFoundException } from '@shared/exceptions/NotFoundException';
-import * as fs from 'fs';
-
-jest.mock('fs');
 
 interface IUserPhotoStore {
   findById(id: string): Promise<UserModel | null>;
@@ -17,21 +14,20 @@ function buildUser(photo: string): UserModel {
 }
 
 describe('UploadUserPhotoUseCase', () => {
-  it('updates the user photo path and deletes the old file', async () => {
-    const existing = buildUser('/uploads/old.jpg');
-    const updated = buildUser('/uploads/new.jpg');
+  it('updates the user photo with the provided public URL', async () => {
+    const existing = buildUser('https://old.supabase.co/photos/old.jpg');
+    const updated = buildUser('https://storage.supabase.co/photos/new.jpg');
     const repository: IUserPhotoStore = {
       findById: jest.fn().mockResolvedValue(existing),
       update: jest.fn().mockResolvedValue(updated),
     };
-    (fs.existsSync as jest.Mock).mockReturnValue(true);
-    (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
-    const sut = new UploadUserPhotoUseCase(repository, '/uploads');
+    const sut = new UploadUserPhotoUseCase(repository);
 
-    const result = await sut.execute('1', 'new.jpg');
+    const result = await sut.execute('1', 'https://storage.supabase.co/photos/new.jpg');
 
-    expect(repository.update).toHaveBeenCalledWith('1', { photo: '/uploads/new.jpg' });
-    expect(fs.unlinkSync).toHaveBeenCalled();
+    expect(repository.update).toHaveBeenCalledWith('1', {
+      photo: 'https://storage.supabase.co/photos/new.jpg',
+    });
     expect(result).toBe(updated);
   });
 
@@ -40,26 +36,23 @@ describe('UploadUserPhotoUseCase', () => {
       findById: jest.fn().mockResolvedValue(null),
       update: jest.fn(),
     };
-    const sut = new UploadUserPhotoUseCase(repository, '/uploads');
+    const sut = new UploadUserPhotoUseCase(repository);
 
-    await expect(sut.execute('missing', 'new.jpg')).rejects.toThrow(NotFoundException);
+    await expect(
+      sut.execute('missing', 'https://storage.supabase.co/photos/new.jpg'),
+    ).rejects.toThrow(NotFoundException);
   });
 
-  it('does not throw when deleting the old photo fails', async () => {
-    const existing = buildUser('/uploads/old.jpg');
-    const updated = buildUser('/uploads/new.jpg');
+  it('throws NotFoundException when update returns null', async () => {
+    const existing = buildUser('https://old.supabase.co/photos/old.jpg');
     const repository: IUserPhotoStore = {
       findById: jest.fn().mockResolvedValue(existing),
-      update: jest.fn().mockResolvedValue(updated),
+      update: jest.fn().mockResolvedValue(null),
     };
-    (fs.existsSync as jest.Mock).mockReturnValue(true);
-    (fs.unlinkSync as jest.Mock).mockImplementation(() => {
-      throw new Error('disk error');
-    });
-    const sut = new UploadUserPhotoUseCase(repository, '/uploads');
+    const sut = new UploadUserPhotoUseCase(repository);
 
-    const result = await sut.execute('1', 'new.jpg');
-
-    expect(result).toBe(updated);
+    await expect(
+      sut.execute('1', 'https://storage.supabase.co/photos/new.jpg'),
+    ).rejects.toThrow(NotFoundException);
   });
 });
