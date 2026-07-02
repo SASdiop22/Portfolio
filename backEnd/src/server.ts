@@ -5,10 +5,12 @@ import { resolve } from 'path';
 // Charger .env AVANT tout
 dotenv.config({ path: resolve(__dirname, '../.env') });
 
-import express, { Application, Request, Response, NextFunction } from 'express';
+import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import { envConfig } from './config/env.config';
 import { initializeDatabase } from './infrastructure/database/config/data-source';
+import { errorMiddleware } from '@infrastructure/middlewares/error.middleware';
+import apiRoutes from '@infrastructure/routes';
 
 // Initialiser l'application Express
 const app: Application = express();
@@ -22,7 +24,7 @@ app.use(
   cors({
     origin: envConfig.frontendUrl,
     credentials: true,
-  })
+  }),
 );
 
 // Parser JSON et URL-encoded
@@ -53,10 +55,7 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
-// TODO: Ajouter les routes API ici
-// app.use(`${envConfig.apiPrefix}/projects`, projectRoutes);
-// app.use(`${envConfig.apiPrefix}/skills`, skillRoutes);
-// etc...
+app.use(envConfig.apiPrefix, apiRoutes);
 
 // ========================================
 // GESTION DES ERREURS
@@ -72,14 +71,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Gestionnaire d'erreurs global
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('❌ Erreur:', err);
-  res.status(500).json({
-    success: false,
-    message: 'Erreur interne du serveur',
-    error: envConfig.nodeEnv === 'development' ? err.message : undefined,
-  });
-});
+app.use(errorMiddleware);
 
 // ========================================
 // DÉMARRAGE DU SERVEUR

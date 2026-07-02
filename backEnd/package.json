@@ -4,13 +4,18 @@
   "description": "Backend API pour portfolio avec back-office",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/server.ts",
-    "build": "tsc",
+    "dev": "nodemon --exec ts-node -r tsconfig-paths/register src/server.ts",
+    "build": "tsc && tsc-alias",
     "start": "node dist/server.js",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:generate": "npm run typeorm migration:generate",
     "migration:run": "npm run typeorm migration:run",
-    "migration:revert": "npm run typeorm migration:revert"
+    "migration:revert": "npm run typeorm migration:revert",
+    "lint": "eslint \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "jest",
+    "seed:admin": "ts-node -r tsconfig-paths/register src/infrastructure/database/seeders/admin-user.seed.ts"
   },
   "keywords": ["portfolio", "api", "typescript", "express"],
   "author": "",
@@ -38,6 +43,18 @@
     "@types/multer": "^1.4.11",
     "typescript": "^5.3.3",
     "ts-node": "^10.9.2",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-boundaries": "^4.2.2",
+    "prettier": "^3.3.3",
+    "tsconfig-paths": "^4.2.0",
+    "tsc-alias": "^1.8.10",
+    "eslint-import-resolver-typescript": "^3.7.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "@types/jest": "^29.5.12"
   }
 }

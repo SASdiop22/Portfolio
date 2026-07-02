@@ -1,4 +1,4 @@
-import { NewsModel } from '@domain/models';
+import { NewsModel } from '@domain/models/News';
 
 export interface INewsRepository {
   findByCategory(category: string): Promise<NewsModel[]>;

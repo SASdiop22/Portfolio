@@ -11,7 +11,7 @@ export const configureServer = (app: Application): void => {
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
       allowedHeaders: ['Content-Type', 'Authorization'],
-    })
+    }),
   );
 
   // Body parsers
