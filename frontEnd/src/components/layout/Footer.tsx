@@ -50,20 +50,16 @@ export function Footer() {
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">
             Réseaux
           </p>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-4">
             {socialLinks?.map((link) => (
               <a
                 key={link.id}
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-400 hover:text-white transition-colors text-sm"
+                className="text-slate-400 hover:text-white transition-colors text-sm font-medium"
               >
-                {link.logo ? (
-                  <img src={link.logo} alt={link.platform} className="w-5 h-5" />
-                ) : (
-                  link.platform
-                )}
+                {link.platform}
               </a>
             ))}
           </div>
