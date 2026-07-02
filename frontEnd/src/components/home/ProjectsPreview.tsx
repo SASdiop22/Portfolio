@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { GitFork, ExternalLink } from 'lucide-react';
+import { GitBranch, ExternalLink } from 'lucide-react';
 import { AnimatedSection } from '@/components/ui/AnimatedSection';
 import { useProjects } from '@/lib/queries/useProjects';
 
@@ -31,8 +31,8 @@ export function ProjectsPreview() {
         <div className="grid md:grid-cols-3 gap-6">
           {featured.map((project, i) => (
             <AnimatedSection key={project.id} delay={i * 0.1}>
-              <Link href={`/projets/${project.id}`} className="block group">
-                <div className="bg-[#05091a] border border-white/5 rounded-xl overflow-hidden hover:border-blue-700/30 transition-colors">
+              <div className="bg-[#05091a] border border-white/5 rounded-xl overflow-hidden hover:border-blue-700/30 transition-colors">
+                <Link href={`/projets/${project.id}`} className="block group">
                   <div className="h-48 bg-gradient-to-br from-blue-900/20 to-[#05091a] relative overflow-hidden">
                     {project.imageUrl && (
                       <img
@@ -42,7 +42,7 @@ export function ProjectsPreview() {
                       />
                     )}
                   </div>
-                  <div className="p-5">
+                  <div className="px-5 pt-5 pb-2">
                     <h3 className="text-white font-semibold mb-2">
                       {project.title}
                     </h3>
@@ -59,34 +59,34 @@ export function ProjectsPreview() {
                         </span>
                       ))}
                     </div>
-                    <div
-                      className="flex gap-3"
-                      onClick={(e) => e.preventDefault()}
-                    >
-                      {project.githubUrl && (
-                        <a
-                          href={project.githubUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-slate-500 hover:text-white transition-colors"
-                        >
-                          <GitFork size={16} />
-                        </a>
-                      )}
-                      {project.demoUrl && (
-                        <a
-                          href={project.demoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-slate-500 hover:text-white transition-colors"
-                        >
-                          <ExternalLink size={16} />
-                        </a>
-                      )}
-                    </div>
                   </div>
+                </Link>
+
+                <div className="flex gap-3 px-5 pb-5">
+                  {project.githubUrl && (
+                    <a
+                      href={project.githubUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-slate-500 hover:text-white transition-colors"
+                    >
+                      <GitBranch size={16} />
+                    </a>
+                  )}
+                  {project.demoUrl && (
+                    <a
+                      href={project.demoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-slate-500 hover:text-white transition-colors"
+                    >
+                      <ExternalLink size={16} />
+                    </a>
+                  )}
                 </div>
-              </Link>
+              </div>
             </AnimatedSection>
           ))}
         </div>

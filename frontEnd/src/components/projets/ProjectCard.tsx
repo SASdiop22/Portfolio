@@ -12,14 +12,14 @@ interface Props {
 
 export function ProjectCard({ project }: Props) {
   return (
-    <Link href={`/projets/${project.id}`} className="block group">
-      <div
-        className={cn(
-          'bg-[#0a1128] border border-white/5 rounded-xl overflow-hidden transition-all duration-300',
-          'hover:border-blue-700/30 hover:scale-[1.02]',
-          project.featured && 'ring-2 ring-blue-700/40'
-        )}
-      >
+    <div
+      className={cn(
+        'bg-[#0a1128] border border-white/5 rounded-xl overflow-hidden transition-all duration-300',
+        'hover:border-blue-700/30 hover:scale-[1.02]',
+        project.featured && 'ring-2 ring-blue-700/40'
+      )}
+    >
+      <Link href={`/projets/${project.id}`} className="block group">
         <div className="relative h-48 bg-gradient-to-br from-blue-900/20 to-[#05091a] overflow-hidden">
           {project.imageUrl && (
             <img
@@ -30,7 +30,7 @@ export function ProjectCard({ project }: Props) {
           )}
         </div>
 
-        <div className="p-5">
+        <div className="px-5 pt-5 pb-2">
           <h3 className="text-white font-semibold text-lg mb-2">
             {project.title}
           </h3>
@@ -50,34 +50,33 @@ export function ProjectCard({ project }: Props) {
               </span>
             )}
           </div>
-
-          <div
-            className="flex gap-3"
-            onClick={(e) => e.preventDefault()}
-          >
-            {project.githubUrl && (
-              <a
-                href={project.githubUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-500 hover:text-white transition-colors"
-              >
-                <GitBranch size={18} />
-              </a>
-            )}
-            {project.demoUrl && (
-              <a
-                href={project.demoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-500 hover:text-white transition-colors"
-              >
-                <ExternalLink size={18} />
-              </a>
-            )}
-          </div>
         </div>
+      </Link>
+
+      <div className="flex gap-3 px-5 pb-5">
+        {project.githubUrl && (
+          <a
+            href={project.githubUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-slate-500 hover:text-white transition-colors"
+          >
+            <GitBranch size={18} />
+          </a>
+        )}
+        {project.demoUrl && (
+          <a
+            href={project.demoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-slate-500 hover:text-white transition-colors"
+          >
+            <ExternalLink size={18} />
+          </a>
+        )}
       </div>
-    </Link>
+    </div>
   );
 }

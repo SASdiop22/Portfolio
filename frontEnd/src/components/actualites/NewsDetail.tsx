@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import DOMPurify from 'isomorphic-dompurify';
 import { useNewsItem } from '@/lib/queries/useNews';
 
 interface Props {
@@ -72,7 +73,7 @@ export function NewsDetail({ id }: Props) {
 
         <div
           className="prose prose-invert prose-slate max-w-none"
-          dangerouslySetInnerHTML={{ __html: news.content }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(news.content) }}
         />
       </div>
     </div>
